@@ -1,0 +1,22 @@
+# Dependencies
+**/node_modules/
+**/dist/
+Frontend/.vite/
+
+# Local Environment Secrets
+.env
+Backend/.env
+Frontend/.env
+**/.env
+**/.env.*
+
+# Editor & System Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local Diagnostic Files
+**/lint_output*.txt
+**/tmp_search.txt
+test_replay.js
