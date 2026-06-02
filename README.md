@@ -4,6 +4,77 @@ DesignDeck is a premium real-time collaborative digital canvas designed for team
 
 ---
 
+## System Architecture
+
+DesignDeck is powered by a high-performance decoupled architecture designed for fluid vector calculations, minimal network overhead, and zero-conflict collaborative drawing.
+
+```mermaid
+flowchart TB
+    subgraph Frontend [Vite React Client]
+        UI[React UI Components]
+        Controller[CanvasEngineController]
+        ToolMgr[Tool Manager System]
+        HistMgr[History Manager - Command Pattern]
+        LayerMgr[Layer Manager]
+        ReplayMgr[Replay Manager]
+        YClient[Yjs / y-websocket Client]
+        SIOClient[Socket.IO Client]
+    end
+
+    subgraph Backend [Node.js & Express Server]
+        HTTP[Express REST API]
+        AuthMid[authMiddleware JWT Guard]
+        WSServer[y-websocket Server Hub]
+        SIOServer[Socket.IO Engine]
+        Persistence[Yjs Persistence Manager]
+    end
+
+    subgraph Database [MongoDB Engine]
+        UserCol[(User Collection)]
+        CanvasCol[(Canvas Collection)]
+        EventCol[(Event Collection)]
+        CommentCol[(Comment Collection)]
+    end
+
+    %% Client Interactions
+    UI --> Controller
+    Controller --> ToolMgr
+    Controller --> HistMgr
+    Controller --> LayerMgr
+    Controller --> YClient
+    Controller --> SIOClient
+    ReplayMgr --> UI
+
+    %% Network Connections
+    YClient <== "WebSocket (Path: /)" ==> WSServer
+    SIOClient <== "WebSocket (Path: /socket.io/)" ==> SIOServer
+    UI -- "REST Requests (JWT Bearer)" --> HTTP
+    
+    %% Backend Flows
+    HTTP --> AuthMid
+    AuthMid --> CanvasCol
+    WSServer --> Persistence
+    Persistence <--> CanvasCol
+    Persistence -- "Throttled Writes (250ms)" --> EventCol
+    SIOServer <--> CommentCol
+```
+
+### Architectural Pipeline Breakdown
+
+1. **State Sync Pipeline (Yjs over WebSockets)**:
+   All shared geometric layers, brush strokes, and vector shapes are kept in-sync via Conflict-free Replicated Data Types (CRDTs). As users interact with the canvas, modifications are locally resolved in memory and transmitted directly over raw WebSockets (`/`) using binary-serialized buffers. This bypasses HTTP overhead entirely, enabling sub-30ms coordinate replication across all active cursors.
+
+2. **Transactional Pipeline (Socket.IO)**:
+   Low-frequency collaboration features (such as live canvas comment notifications, team chats, cursor location streams, and permission level updates) are separated into a dedicated Socket.IO instance (`/socket.io/`). This isolates raw high-frequency coordinate tracking from transactional metadata, preventing synchronization locks or thread blockages.
+
+3. **Event-Driven History Throttling**:
+   To capture real-time time-travel replays without saturating the MongoDB server, a throttled database persistence manager buffers canvas updates in RAM and writes a binary representation (`Y.encodeStateAsUpdate(doc)`) to the database every 250ms.
+
+4. **Cache-Evicting Rollback Engine**:
+   To prevent clients from serving outdated cached files when rolling back state, the backend updates the canvas database entry and forcefully deletes the server's in-memory active YDoc representation, evicting the client caches and forcing a complete re-synchronization directly from MongoDB.
+
+---
+
 ## Key Features
 
 *   **Real-Time CRDT Canvas Collaboration**: Powered by `Yjs` and WebSocket endpoints for low-latency, conflict-free drawing and object synchronization.
