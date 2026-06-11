@@ -74,6 +74,7 @@ export class CanvasEngineController {
       hoveredObjectId: null,
       hiddenPointers: new Set(),
       mutedUsers: new Set(),
+      backgroundColor: '#FFFFFF',
     };
 
     // Comment counts cache: { objectId -> count }
@@ -998,8 +999,8 @@ export class CanvasEngineController {
   render() {
     if (!this.ctx) return;
 
-    // Pure White Continuous Design
-    this.ctx.fillStyle = '#FFFFFF';
+    // Dynamic background color set by theme or AI
+    this.ctx.fillStyle = this.state.backgroundColor || '#FFFFFF';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.ctx.save();
@@ -1695,6 +1696,271 @@ export class CanvasEngineController {
 
   dispatchStateChange(key, value) {
     window.dispatchEvent(new CustomEvent('engineStateChange', { detail: { key, value } }));
+  }
+
+  executeAIActions(actions) {
+    if (!this.canEdit() || !actions || !Array.isArray(actions)) return;
+
+    const resolveTargetIds = (ids) => {
+      if (!ids || !Array.isArray(ids)) return [];
+      return ids.map(id => {
+        if (this.getObject(id)) return id;
+        const match = Object.keys(this.sceneManager.objects).find(key => 
+          key.startsWith(id) || id.startsWith(key)
+        );
+        return match || null;
+      }).filter(Boolean);
+    };
+
+    this.doc.transact(() => {
+      actions.forEach(action => {
+        try {
+          switch (action.type) {
+            case 'DRAW_SHAPE': {
+              const geom = action.shape === 'circle'
+                ? { cx: action.x, cy: action.y, radius: action.width ? action.width / 2 : 40 }
+                : (action.shape === 'line' || action.shape === 'arrow')
+                  ? { x1: action.x, y1: action.y, x2: action.x + (action.width || 100), y2: action.y + (action.height || 0) }
+                  : { x: action.x, y: action.y, width: action.width || 100, height: action.height || 100 };
+              
+              this.addObject({
+                type: action.shape,
+                geometry: geom,
+                style: {
+                  color: action.color || this.state.brushOptions?.color || '#217BF4',
+                  fillColor: action.fillColor || 'transparent',
+                  width: 5
+                },
+                name: action.label || `${action.shape} (AI)`
+              });
+              break;
+            }
+
+            case 'DRAW_MULTIPLE': {
+              if (Array.isArray(action.shapes)) {
+                action.shapes.forEach(sh => {
+                  const geom = sh.shape === 'circle'
+                    ? { cx: sh.x, cy: sh.y, radius: sh.width ? sh.width / 2 : 40 }
+                    : (sh.shape === 'line' || sh.shape === 'arrow')
+                      ? { x1: sh.x, y1: sh.y, x2: sh.x + (sh.width || 100), y2: sh.y + (sh.height || 0) }
+                      : { x: sh.x, y: sh.y, width: sh.width || 100, height: sh.height || 100 };
+                  
+                  this.addObject({
+                    type: sh.shape,
+                    geometry: geom,
+                    style: {
+                      color: sh.color || this.state.brushOptions?.color || '#217BF4',
+                      fillColor: sh.fillColor || 'transparent',
+                      width: 5
+                    },
+                    name: sh.label || `${sh.shape} (AI)`
+                  });
+                });
+              }
+              break;
+            }
+
+            case 'ARRANGE_GRID': {
+              const targetIds = (action.targetIds && action.targetIds.length > 0) 
+                ? resolveTargetIds(action.targetIds) 
+                : this.state.selectedObjectIds;
+              
+              if (targetIds && targetIds.length > 0) {
+                const cols = action.columns || 3;
+                const spacing = action.spacing || 60;
+                
+                const firstObj = this.getObject(targetIds[0]);
+                if (firstObj) {
+                  let startX = 150;
+                  let startY = 150;
+                  
+                  if (firstObj.geometry.x !== undefined) {
+                    startX = firstObj.geometry.x;
+                    startY = firstObj.geometry.y;
+                  } else if (firstObj.geometry.cx !== undefined) {
+                    startX = firstObj.geometry.cx;
+                    startY = firstObj.geometry.cy;
+                  }
+
+                  targetIds.forEach((id, index) => {
+                    const obj = this.getObject(id);
+                    if (!obj) return;
+
+                    const col = index % cols;
+                    const row = Math.floor(index / cols);
+                    
+                    const w = obj.geometry.width || 80;
+                    const h = obj.geometry.height || 80;
+                    
+                    const newX = startX + col * (w + spacing);
+                    const newY = startY + row * (h + spacing);
+
+                    if (obj.geometry.x !== undefined) {
+                      this.updateObject(id, { geometry: { ...obj.geometry, x: newX, y: newY } });
+                    } else if (obj.geometry.cx !== undefined) {
+                      this.updateObject(id, { geometry: { ...obj.geometry, cx: newX, cy: newY } });
+                    }
+                  });
+                }
+              }
+              break;
+            }
+
+            case 'ADD_TEXT': {
+              this.addObject({
+                type: 'text',
+                geometry: { x: action.x, y: action.y, text: action.text || 'Text Box', width: 180, height: 40 },
+                style: { color: action.color || '#000000', fontSize: action.fontSize || 20 }
+              });
+              break;
+            }
+
+            case 'FILL_BACKGROUND': {
+              this.state.backgroundColor = action.color || '#FFFFFF';
+              break;
+            }
+
+            case 'CLEAR_CANVAS': {
+              this.clearAll();
+              break;
+            }
+
+            case 'CHANGE_TOOL': {
+              this.setTool(action.tool || 'select');
+              break;
+            }
+
+            case 'CHANGE_COLOR': {
+              this.setBrushOptions({ color: action.color });
+              break;
+            }
+
+            case 'SET_STROKE_WIDTH': {
+              this.setBrushOptions({ width: action.width });
+              break;
+            }
+
+            case 'SET_FILL_MODE': {
+              this.setFillEnabled(!!action.fill);
+              break;
+            }
+
+            case 'SET_ZOOM': {
+              this.setZoom(action.zoom || 1.0);
+              break;
+            }
+
+            case 'UNDO': {
+              this.undo();
+              break;
+            }
+
+            case 'REDO': {
+              this.redo();
+              break;
+            }
+
+            case 'DELETE_SELECTED': {
+              if (this.state.selectedObjectIds.length > 0) {
+                this.state.selectedObjectIds.forEach(id => this.removeObject(id));
+                this.state.selectedObjectIds = [];
+                this.state.selectedObjectId = null;
+                this.dispatchStateChange('selection', null);
+                this.setSelectionAwareness([]);
+              }
+              break;
+            }
+
+            case 'DELETE_SHAPES': {
+              const targetIds = (action.targetIds && action.targetIds.length > 0)
+                ? resolveTargetIds(action.targetIds)
+                : this.state.selectedObjectIds;
+              if (targetIds && targetIds.length > 0) {
+                targetIds.forEach(id => this.removeObject(id));
+                this.state.selectedObjectIds = this.state.selectedObjectIds.filter(id => !targetIds.includes(id));
+                if (targetIds.includes(this.state.selectedObjectId)) {
+                  this.state.selectedObjectId = null;
+                }
+                this.dispatchStateChange('selection', null);
+                this.setSelectionAwareness(this.state.selectedObjectIds);
+              }
+              break;
+            }
+
+            case 'DUPLICATE_SELECTED': {
+              if (this.state.selectedObjectIds.length > 0) {
+                const newIds = this.state.selectedObjectIds.map(id => this.duplicateObject(id));
+                this.setSelectionAwareness(newIds.filter(Boolean));
+              }
+              break;
+            }
+
+            case 'MOVE_SELECTED': {
+              const dx = action.dx || 0;
+              const dy = action.dy || 0;
+              if (this.state.selectedObjectIds.length > 0) {
+                this.state.selectedObjectIds.forEach(id => {
+                  const obj = this.getObject(id);
+                  if (!obj) return;
+                  if (obj.geometry.x !== undefined) {
+                    this.updateObject(id, { geometry: { ...obj.geometry, x: obj.geometry.x + dx, y: obj.geometry.y + dy } });
+                  } else if (obj.geometry.cx !== undefined) {
+                    this.updateObject(id, { geometry: { ...obj.geometry, cx: obj.geometry.cx + dx, cy: obj.geometry.cy + dy } });
+                  }
+                });
+              }
+              break;
+            }
+
+            case 'RESIZE_SELECTED': {
+              const w = action.width || 100;
+              const h = action.height || 100;
+              if (this.state.selectedObjectIds.length > 0) {
+                this.state.selectedObjectIds.forEach(id => {
+                  const obj = this.getObject(id);
+                  if (!obj) return;
+                  if (obj.geometry.x !== undefined) {
+                    this.updateObject(id, { geometry: { ...obj.geometry, width: w, height: h } });
+                  } else if (obj.geometry.cx !== undefined) {
+                    this.updateObject(id, { geometry: { ...obj.geometry, radius: w / 2 } });
+                  }
+                });
+              }
+              break;
+            }
+
+            case 'MODIFY_SHAPES': {
+              const targetIds = (action.targetIds && action.targetIds.length > 0)
+                ? resolveTargetIds(action.targetIds)
+                : this.state.selectedObjectIds;
+              const updates = action.updates;
+              if (targetIds && targetIds.length > 0 && updates) {
+                targetIds.forEach(id => {
+                  const obj = this.getObject(id);
+                  if (!obj) return;
+                  
+                  const updatedStyle = updates.style ? { ...obj.style, ...updates.style } : obj.style;
+                  const updatedGeom = updates.geometry ? { ...obj.geometry, ...updates.geometry } : obj.geometry;
+
+                  this.updateObject(id, {
+                    style: updatedStyle,
+                    geometry: updatedGeom
+                  });
+                });
+              }
+              break;
+            }
+
+            default:
+              console.warn('[AI Execution] Unhandled action type:', action.type);
+          }
+        } catch (err) {
+          console.error('[AI Execution] Failed to run action:', action, err);
+        }
+      });
+    });
+
+    this.render();
   }
 
   destroy() {
