@@ -285,28 +285,6 @@ Before launching the project, ensure you have the following installed on your ma
 
 ---
 
-## Project Configuration
-
-The project uses separate `.env` files for the Backend and Frontend.
-
-### Backend (`Backend/.env`)
-Create a `.env` file inside the `Backend/` directory with the following variables:
-```text
-PORT=5000
-MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/Canvas
-JWT_SECRET=your_jwt_secret_key_here
-```
-
-### Frontend (`Frontend/.env`)
-Create a `.env` file inside the `Frontend/` directory with the following variables:
-```text
-VITE_API_URL=http://localhost:5000
-VITE_WS_URL=ws://localhost:5000
-```
-Make sure the URLs match the `PORT` set in the backend `.env`.
-
----
-
 ## Project Installation & Local Development
 
 ### 1. Backend Server Setup
