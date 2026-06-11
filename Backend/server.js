@@ -30,6 +30,7 @@ import Comment from './models/Comment.js';
 import authRoutes from './routes/authRoutes.js';
 import canvasRoutes from './routes/canvasRoutes.js';
 import commentRoutes from './routes/commentRoutes.js';
+import botRoutes from './routes/botRoutes.js';
 import { Server } from "socket.io";
 
 const app = express();
@@ -43,6 +44,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/canvas', canvasRoutes);
 app.use('/api/comments', commentRoutes);
+app.use('/api/bot', botRoutes);
 
 // Health Endpoint
 app.get('/', (req, res) => {
