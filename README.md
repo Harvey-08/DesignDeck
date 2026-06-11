@@ -8,55 +8,90 @@ DesignDeck is a premium real-time collaborative digital canvas designed for team
 
 DesignDeck is powered by a high-performance decoupled architecture designed for fluid vector calculations, minimal network overhead, and zero-conflict collaborative drawing.
 
+### DesignDeck System Architecture
+
+This diagram illustrates the core drawing, state synchronization, and real-time database persistence pipeline.
+
 ```mermaid
-flowchart TB
-    subgraph Frontend [Vite React Client]
-        UI[React UI Components]
-        Controller[CanvasEngineController]
-        ToolMgr[Tool Manager System]
-        HistMgr[History Manager - Command Pattern]
-        LayerMgr[Layer Manager]
-        ReplayMgr[Replay Manager]
-        YClient[Yjs / y-websocket Client]
-        SIOClient[Socket.IO Client]
+flowchart TD
+
+    subgraph Frontend ["Frontend Client Layer"]
+        UI["React UI (Toolbar, Canvas, Sidebar)"]
+        BotWidget["AI Co-Pilot Bot Widget"]
+        Controller["CanvasEngineController"]
+
+        subgraph Managers ["Drawing Engine Subsystems"]
+            ToolMgr["Tool Manager"]
+            HistMgr["History Manager (Command Pattern)"]
+            LayerMgr["Layer Manager"]
+            ReplayMgr["Replay Manager"]
+        end
+
+        YClient["Yjs WebSockets Client"]
+        SIOClient["Socket.IO Client"]
+
+        UI --> Controller
+        UI --> BotWidget
+        BotWidget --> Controller
+
+        Controller --> ToolMgr
+        Controller --> HistMgr
+        Controller --> LayerMgr
+        Controller --> ReplayMgr
+        Controller --> YClient
+        Controller --> SIOClient
     end
 
-    subgraph Backend [Node.js & Express Server]
-        HTTP[Express REST API]
-        AuthMid[authMiddleware JWT Guard]
-        WSServer[y-websocket Server Hub]
-        SIOServer[Socket.IO Engine]
-        Persistence[Yjs Persistence Manager]
+    subgraph Backend ["Backend Server Layer"]
+        HTTP["Express REST API"]
+        AuthMid["JWT Auth Middleware"]
+        BotController["Bot Controller (SSE)"]
+        RAGService["RAG Service (ONNX)"]
+        WSServer["Yjs WebSocket Server"]
+        SIOServer["Socket.IO Server Hub"]
+        Persistence["Yjs Persistence Manager"]
+
+        HTTP --> AuthMid
+        HTTP --> BotController
+        BotController --> RAGService
+        WSServer --> Persistence
     end
 
-    subgraph Database [MongoDB Engine]
-        UserCol[(User Collection)]
-        CanvasCol[(Canvas Collection)]
-        EventCol[(Event Collection)]
-        CommentCol[(Comment Collection)]
+    subgraph Storage ["Storage & External Services"]
+        subgraph Mongo ["MongoDB Database"]
+            UserCol[("User Collection")]
+            CanvasCol[("Canvas Collection")]
+            EventCol[("Event Collection")]
+            CommentCol[("Comment Collection")]
+        end
+
+        KBFile[("knowledge_base.json")]
+        GroqCloud[["Groq LLM Service"]]
     end
 
-    %% Client Interactions
-    UI --> Controller
-    Controller --> ToolMgr
-    Controller --> HistMgr
-    Controller --> LayerMgr
-    Controller --> YClient
-    Controller --> SIOClient
-    ReplayMgr --> UI
+    %% Frontend -> Backend
+    UI -->|HTTP REST Requests| HTTP
+    BotWidget -->|SSE Stream| HTTP
+    YClient -->|WebSocket Sync| WSServer
+    SIOClient -->|WebSocket Events| SIOServer
 
-    %% Network Connections
-    YClient <== "WebSocket (Path: /)" ==> WSServer
-    SIOClient <== "WebSocket (Path: /socket.io/)" ==> SIOServer
-    UI -- "REST Requests (JWT Bearer)" --> HTTP
-    
-    %% Backend Flows
-    HTTP --> AuthMid
+    %% Backend -> Services
     AuthMid --> CanvasCol
-    WSServer --> Persistence
-    Persistence <--> CanvasCol
-    Persistence -- "Throttled Writes (250ms)" --> EventCol
-    SIOServer <--> CommentCol
+    BotController --> GroqCloud
+    RAGService --> KBFile
+
+    %% Persistence
+    Persistence --> CanvasCol
+    Persistence --> EventCol
+    SIOServer --> CommentCol
+
+    %% Vertical stacking
+    Frontend --> Backend
+    Backend --> Storage
+
+    %% Alignment helpers
+    Controller ~~~ HTTP
+    HTTP ~~~ CanvasCol
 ```
 
 ### Architectural Pipeline Breakdown
@@ -73,11 +108,15 @@ flowchart TB
 4. **Cache-Evicting Rollback Engine**:
    To prevent clients from serving outdated cached files when rolling back state, the backend updates the canvas database entry and forcefully deletes the server's in-memory active YDoc representation, evicting the client caches and forcing a complete re-synchronization directly from MongoDB.
 
+5. **Canvas-Aware AI Co-Pilot & RAG Pipeline**:
+   The chatbot leverages a local RAG semantic search using the `all-MiniLM-L6-v2` transformer model (via Xenova) to query in-memory cached vector embeddings of product help docs. The backend feeds the matching document contexts and a token-trimmed JSON representation of the canvas state to the Groq LLM API. The LLM streams conversational answers and JSON canvas commands back over Server-Sent Events (SSE). The client parses this stream and executes modifications directly on the drawing canvas.
+
 ---
 
 ## Key Features
 
 *   **Real-Time CRDT Canvas Collaboration**: Powered by `Yjs` and WebSocket endpoints for low-latency, conflict-free drawing and object synchronization.
+*   **AI Co-Pilot & RAG Assistant**: Ask the chatbot about platform shortcuts/milestones/branches, or request it to draw, modify, align, style, and delete whiteboard elements, with responses streaming over Server-Sent Events (SSE).
 *   **Granular Layer Control**: Create, reorder, delete, rename, lock, toggle visibility, and adjust opacity of multiple layers on the canvas.
 *   **Time-Travel Replays**: Record updates, play, pause, step forward/backward, and control playback speed of canvas state changes using custom timeline playback controls.
 *   **Collaborator Tracking**: View who is active on the canvas with color-coded tags and cursor position tracking.
@@ -115,7 +154,10 @@ DesignDeck/
 ├── Backend/                                                 # Server-side backend environment
 │   ├── controllers/                                         # REST API controllers
 │   │   ├── authController.js                                # Handles user login and registration routes
+│   │   ├── botController.js                                 # Handles AI chatbot conversations, RAG search, and SSE streaming
 │   │   └── canvasController.js                              # Handles canvases, memberships, links, and role sockets
+│   ├── data/                                                # Database seeding and knowledge base directory
+│   │   └── knowledge_base.json                              # Platform help guidelines database for RAG context retrieval
 │   ├── middleware/                                          # Express routing middleware
 │   │   └── authMiddleware.js                                # Secures routes using JWT authorization guards
 │   ├── models/                                              # MongoDB schema definitions (Mongoose)
@@ -125,10 +167,11 @@ DesignDeck/
 │   │   └── User.js                                          # Registered user accounts database schema
 │   ├── routes/                                              # Express API routes
 │   │   ├── authRoutes.js                                    # Maps auth endpoints to authController
+│   │   ├── botRoutes.js                                     # Maps bot routes to botController
 │   │   ├── canvasRoutes.js                                  # Maps canvas and branch endpoints to canvasController
 │   │   └── commentRoutes.js                                 # Maps comment endpoints to commentController
-│   ├── check_events.js                                      # Diagnostic script to list database timeline events
-│   ├── check_routes.js                                      # Helper utility to inspect Express routes mapping
+│   ├── services/                                            # Core server-side business logic helper modules
+│   │   └── RAGService.js                                    # Local vector embedding search using all-MiniLM-L6-v2
 │   ├── package-lock.json                                    # Node.js backend dependencies lockfile
 │   ├── package.json                                         # Node.js backend configuration and scripts
 │   └── server.js                                            # Main server starting HTTP, socket.io, and WS servers
@@ -142,6 +185,9 @@ DesignDeck/
 │   │   ├── assets/                                          # Static media assets and logos
 │   │   │   └── react.svg                                    # React logo graphic asset
 │   │   ├── components/                                      # Modular React interface elements
+│   │   │   ├── Bot/                                         # AI Co-Pilot chatbot widget UI components
+│   │   │   │   ├── BotWidget.css                            # Styling for the AI Co-Pilot floating widget panel
+│   │   │   │   └── BotWidget.jsx                            # Renders bot floating action buttons and chats
 │   │   │   ├── Sidebar/                                     # Right side sidebar panels
 │   │   │   │   ├── LayerRow.jsx                             # Renders a single layer row with controls
 │   │   │   │   ├── LayersPanel.jsx                          # Renders layers lists, locks, and visibilities
@@ -311,8 +357,6 @@ Detailed structural manuals and full developer specifications are maintained ins
 ## Future Improvements
 
 Here are the planned and recommended next steps for extending the DesignDeck codebase:
-1.  **Canvas Drawing Enhancements**: Support for custom shapes, text box insertions, image imports, and grid snap-to alignments.
-2.  **Undo/Redo Stack**: Integrating local custom history stacks to allow individual undo/redo alongside global real-time synchronization.
-3.  **Enhanced Canvas Templates**: A gallery of ready-to-use canvas wireframes, Kanban boards, flowcharts, and customer journey templates.
-4.  **Offline Sync Support**: Leveraging client-side persistent storage (IndexDB) through Yjs to support full offline drawing states that sync up on reconnection.
-5.  **Built-in Audio/Video Rooms**: WebRTC integration to allow voice and video calls directly inside active canvas rooms during collaborative sessions.
+1.  **Enhanced Canvas Templates**: A gallery of ready-to-use canvas wireframes, Kanban boards, flowcharts, and customer journey templates.
+2.  **Offline Sync Support**: Leveraging client-side persistent storage (IndexDB) through Yjs to support full offline drawing states that sync up on reconnection.
+3.  **Built-in Audio/Video Rooms**: WebRTC integration to allow voice and video calls directly inside active canvas rooms during collaborative sessions.
