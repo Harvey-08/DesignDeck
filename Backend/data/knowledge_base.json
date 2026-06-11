@@ -1,0 +1,47 @@
+[
+  {
+    "id": "kb_shortcuts",
+    "title": "Keyboard Shortcuts & Hotkeys",
+    "content": "DesignDeck supports various keyboard shortcuts for speed. Undo: Ctrl+Z. Redo: Ctrl+Y. Zoom In: Ctrl+= or Ctrl++. Zoom Out: Ctrl+- or Ctrl+_. Toggle Grid: Ctrl+G. Toggle Distraction-Free (Focus) Mode: Ctrl+Shift+D. Delete selected objects: Backspace or Delete. Pan canvas: Hold Spacebar and drag mouse, or use the middle mouse scroll button click. Search Help Center: Ctrl+K."
+  },
+  {
+    "id": "kb_layers",
+    "title": "Layer Panel Management & Control",
+    "content": "Layers are managed via the right-side Layer Panel. You can add new layers, delete layers, rename them, toggle visibility (eye icon), lock layers to prevent edits (lock icon), drag-reorder layers to change Z-index overlay, and slide the opacity bar to set transparency. The default layer is named 'Background' and is locked initially to prevent unintended background element manipulation."
+  },
+  {
+    "id": "kb_history_replay",
+    "title": "Timeline Replay & Playback Controls",
+    "content": "DesignDeck records every structural canvas operation as a state event in chronological order. The bottom timeline playback widget allows you to replay the drawing history. You can Play, Pause, Step Forward, Step Backward, or change the playback speed (0.5x, 1x, 2x, 5x) to observe the creation process from the absolute beginning."
+  },
+  {
+    "id": "kb_branches",
+    "title": "Creating Sandbox Canvas Branches",
+    "content": "Branching allows collaborators to fork the canvas state into a sandboxed branch. To create a branch, click the 'Branch' button in the dashboard or canvas view. A branch inherits the complete parent canvas history up to the branching milestone. It creates a safe workspace for separate group brainstorming without overwriting the master canvas."
+  },
+  {
+    "id": "kb_rollback",
+    "title": "Canvas State Rollback & Checkpoints",
+    "content": "If an accidental overwrite or vandalism occurs, canvas owners can roll back the workspace to a historical event milestone. Click the 'Rollback' button next to any checkpoint or milestone in the timeline panel. The backend updates the documentState in MongoDB and evicts the active YDoc from server memory to clear the client-side socket cache, forcing a complete reload to the restored state."
+  },
+  {
+    "id": "kb_milestones",
+    "title": "Tagging Timeline Milestones",
+    "content": "Milestones are tagged checkpoints in drawing history. Users can tag the current drawing state with a description (e.g. 'Finished flow diagram draft') by clicking the 'Tag' button in the history/timeline panel. This creates a named reference point on the timeline, making it easy to find and rollback to later."
+  },
+  {
+    "id": "kb_collaboration_sharing",
+    "title": "Sharing, Permissions & Invite Links",
+    "content": "Canvases can be shared via email invitations or custom invite tokens. Generate invite links with specific roles: Viewer (read-only) or Editor (read-write). Invite links can have custom expiration timers. Changing collaborator roles dynamically updates their client toolbar and locks/unlocks editing options via real-time Socket.io transmissions."
+  },
+  {
+    "id": "kb_drawing_tools",
+    "title": "Vector Drawing Tools & Properties",
+    "content": "DesignDeck features several vector design tools: Pencil (freehand sketching with Bezier curve smoothing), Rectangle, Circle, Line, Arrow, Polygon, and Text. Use the Select tool to move, drag, rotate, resize, copy, cut, paste, or delete elements. Properties Panel allows editing stroke width, stroke style, opacity, fill color, font style, and grid overlays."
+  },
+  {
+    "id": "kb_chat_comments",
+    "title": "Group Chat & Targeted Object Comments",
+    "content": "DesignDeck supports double communication channels: global room chat and targeted object-level comments. You can open a targeted comment thread on any rectangle, text box, or stroke by selecting the object and adding a comment. The comment is pinned to that specific vector shape, allowing inline feedback. Notifications are broadcasted to active collaborators via Socket.IO."
+  }
+]
