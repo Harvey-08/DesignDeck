@@ -282,6 +282,30 @@ Before launching the project, ensure you have the following installed on your ma
 *   **Node.js**: `v18.x` or higher
 *   **NPM**: `v9.x` or higher
 *   **MongoDB**: Running instance (Local MongoDB Community Server or MongoDB Atlas cluster connection string)
+*   **Groq API Key**: A valid API key from Groq Cloud (to power the AI Co-Pilot stream assistant)
+
+---
+
+## Project Configuration
+
+The project uses separate `.env` files for the Backend and Frontend.
+
+### Backend (`Backend/.env`)
+Create a `.env` file inside the `Backend/` directory with the following variables:
+```text
+PORT=5000
+MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/Canvas
+JWT_SECRET=your_jwt_secret_key_here
+GROQ_API_KEY=your_groq_api_key_here
+```
+
+### Frontend (`Frontend/.env`)
+Create a `.env` file inside the `Frontend/` directory with the following variables:
+```text
+VITE_API_URL=http://localhost:5000
+VITE_WS_URL=ws://localhost:5000
+```
+Make sure the URLs match the `PORT` set in the backend `.env`.
 
 ---
 
