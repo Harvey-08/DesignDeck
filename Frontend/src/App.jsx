@@ -13,6 +13,7 @@ import Profile from './components/Profile';
 import ChatPanel from './components/ChatPanel';
 import JoinCanvas from './components/JoinCanvas';
 import NotificationSystem from './components/NotificationSystem';
+import BotWidget from './components/Bot/BotWidget';
 
 import { ThemeProvider } from './context/ThemeProvider';
 import { useTheme } from './context/ThemeContext';
@@ -457,6 +458,7 @@ function CanvasWorkspace({ canvasEngineRef }) {
             </div>
           </div>
         </main>
+        <BotWidget canvasEngineRef={canvasEngineRef} />
       </div>
 
       {/* BottomBar (40px specified) */}
