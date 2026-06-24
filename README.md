@@ -116,7 +116,11 @@ flowchart TD
 ## Key Features
 
 *   **Real-Time CRDT Canvas Collaboration**: Powered by `Yjs` and WebSocket endpoints for low-latency, conflict-free drawing and object synchronization.
-*   **AI Co-Pilot & RAG Assistant**: Ask the chatbot about platform shortcuts/milestones/branches, or request it to draw, modify, align, style, and delete whiteboard elements, with responses streaming over Server-Sent Events (SSE).
+*   **WebRTC Video/Audio Conference Rooms**: Join live voice and video calls directly inside active canvas rooms. Features a draggable, minimizable widget window, local camera/audio device selectors, and peer signaling.
+*   **Screen Sharing & Call Recording**: Share screens and capture meeting video feeds, uploading recordings directly to Cloudinary for playback.
+*   **Active Properties Inspector Sync**: Modify selected shape properties (color palette, stroke width, opacity, text fonts, fill modes) in real-time.
+*   **AI Co-Pilot & RAG Assistant**: Ask the chatbot about drawing shapes, styling elements, grid formatting, or platform guidelines, streaming responses and actions over Server-Sent Events (SSE).
+*   **Stale Cursor Suppression**: Automatic cursor cleanup logic that clears inactive pointers after 5 seconds to eliminate duplicate trails during page reconnections.
 *   **Granular Layer Control**: Create, reorder, delete, rename, lock, toggle visibility, and adjust opacity of multiple layers on the canvas.
 *   **Time-Travel Replays**: Record updates, play, pause, step forward/backward, and control playback speed of canvas state changes using custom timeline playback controls.
 *   **Collaborator Tracking**: View who is active on the canvas with color-coded tags and cursor position tracking.
@@ -134,6 +138,7 @@ flowchart TD
 *   **Styling**: Tailwind CSS & Modern Design CSS Tokens
 *   **Real-time Collaboration**: Yjs, `y-websocket` client
 *   **Communication**: Socket.IO-client for interactive comments, chat, and role synchronization
+*   **Media Streaming**: WebRTC PeerConnection APIs for real-time camera/audio/screen channels
 *   **Icons**: Lucide React
 
 ### Backend
@@ -141,6 +146,8 @@ flowchart TD
 *   **Web Framework**: Express
 *   **Database**: MongoDB with Mongoose ODM
 *   **Real-time Services**: WebSocketServer (`ws`), `y-websocket` utility hub, and Socket.IO
+*   **Asset Management**: Cloudinary Node.js SDK and Multer for meeting screen recording uploads
+*   **AI Engine**: Groq SDK for real-time streamed canvas command completions
 *   **Authentication**: JSON Web Token (JWT) & bcryptjs hashing
 
 ---
@@ -152,10 +159,15 @@ The clean, standardized folder structure is organized as follows:
 ```text
 DesignDeck/
 ├── Backend/                                                 # Server-side backend environment
+│   ├── config/                                              # External API and environment loaders
+│   │   ├── cloudinary.js                                    # Connects and authenticates with Cloudinary CDN #
+│   │   └── env.js                                           # Loads .env files into process.env environment #
 │   ├── controllers/                                         # REST API controllers
 │   │   ├── authController.js                                # Handles user login and registration routes
 │   │   ├── botController.js                                 # Handles AI chatbot conversations, RAG search, and SSE streaming
-│   │   └── canvasController.js                              # Handles canvases, memberships, links, and role sockets
+│   │   ├── canvasController.js                              # Handles canvases, memberships, links, and role sockets
+│   │   ├── folderController.js                              # Handles directories and workspace canvas groupings #
+│   │   └── meetingController.js                             # Handles video calls schedule, WebRTC, and recordings #
 │   ├── data/                                                # Database seeding and knowledge base directory
 │   │   └── knowledge_base.json                              # Platform help guidelines database for RAG context retrieval
 │   ├── middleware/                                          # Express routing middleware
@@ -164,12 +176,20 @@ DesignDeck/
 │   │   ├── Canvas.js                                        # Canvas database model with layers and metadata
 │   │   ├── Comment.js                                       # Canvas object-level comments database schema
 │   │   ├── Event.js                                         # Replay timeline updates database structure
+│   │   ├── Folder.js                                        # Workspaces and canvas directories database schema #
+│   │   ├── Meeting.js                                       # Active and scheduled video calls database schema #
+│   │   ├── MeetingMessage.js                                # Live call chat messages history database schema #
+│   │   ├── MeetingRecording.js                              # Meeting screen share video URLs database schema #
+│   │   ├── Notification.js                                  # User invite alerts and message logs database schema #
 │   │   └── User.js                                          # Registered user accounts database schema
 │   ├── routes/                                              # Express API routes
 │   │   ├── authRoutes.js                                    # Maps auth endpoints to authController
 │   │   ├── botRoutes.js                                     # Maps bot routes to botController
 │   │   ├── canvasRoutes.js                                  # Maps canvas and branch endpoints to canvasController
-│   │   └── commentRoutes.js                                 # Maps comment endpoints to commentController
+│   │   ├── commentRoutes.js                                 # Maps comment endpoints to commentController
+│   │   ├── folderRoutes.js                                  # Maps directory endpoints to folderController #
+│   │   ├── meetingRoutes.js                                 # Maps video recording and WebRTC to meetingController #
+│   │   └── notificationRoutes.js                            # Maps alert endpoints to notificationController #
 │   ├── services/                                            # Core server-side business logic helper modules
 │   │   └── RAGService.js                                    # Local vector embedding search using all-MiniLM-L6-v2
 │   ├── package-lock.json                                    # Node.js backend dependencies lockfile
@@ -188,6 +208,11 @@ DesignDeck/
 │   │   │   ├── Bot/                                         # AI Co-Pilot chatbot widget UI components
 │   │   │   │   ├── BotWidget.css                            # Styling for the AI Co-Pilot floating widget panel
 │   │   │   │   └── BotWidget.jsx                            # Renders bot floating action buttons and chats
+│   │   │   ├── Meeting/                                     # Video conference components #
+│   │   │   │   ├── MeetingHistory.jsx                       # View and download meeting recordings #
+│   │   │   │   ├── MeetingLobby.jsx                         # Audio and video settings select overlay #
+│   │   │   │   ├── MeetingRoom.jsx                          # Draggable, minimizable calling canvas overlay #
+│   │   │   │   └── ParticipantGrid.jsx                      # Resizable grid rendering remote peer feeds #
 │   │   │   ├── Sidebar/                                     # Right side sidebar panels
 │   │   │   │   ├── LayerRow.jsx                             # Renders a single layer row with controls
 │   │   │   │   ├── LayersPanel.jsx                          # Renders layers lists, locks, and visibilities
@@ -283,6 +308,7 @@ Before launching the project, ensure you have the following installed on your ma
 *   **NPM**: `v9.x` or higher
 *   **MongoDB**: Running instance (Local MongoDB Community Server or MongoDB Atlas cluster connection string)
 *   **Groq API Key**: A valid API key from Groq Cloud (to power the AI Co-Pilot stream assistant)
+*   **Cloudinary Account**: For saving video recordings of meeting screen shares
 
 ---
 
@@ -294,9 +320,18 @@ The project uses separate `.env` files for the Backend and Frontend.
 Create a `.env` file inside the `Backend/` directory with the following variables:
 ```text
 PORT=5000
-MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/Canvas
+MONGO_URI=mongodb://localhost:27017/Canvas
 JWT_SECRET=your_jwt_secret_key_here
 GROQ_API_KEY=your_groq_api_key_here
+CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_email@gmail.com
+SMTP_PASS=your_app_password
+EMAIL_FROM="DesignDeck <your_email@gmail.com>"
 ```
 
 ### Frontend (`Frontend/.env`)
@@ -361,4 +396,4 @@ Detailed structural manuals and full developer specifications are maintained ins
 Here are the planned and recommended next steps for extending the DesignDeck codebase:
 1.  **Enhanced Canvas Templates**: A gallery of ready-to-use canvas wireframes, Kanban boards, flowcharts, and customer journey templates.
 2.  **Offline Sync Support**: Leveraging client-side persistent storage (IndexDB) through Yjs to support full offline drawing states that sync up on reconnection.
-3.  **Built-in Audio/Video Rooms**: WebRTC integration to allow voice and video calls directly inside active canvas rooms during collaborative sessions.
+3.  **Keyboard Shortcuts Support**: Implement global keyboard event listeners and shortcuts to trigger canvas commands and tool selections.

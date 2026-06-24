@@ -36,3 +36,45 @@ DesignDeck uses **CRDTs** (Conflict-free Replicated Data Types) via Yjs.
 The engine uses global window listeners for shortcuts but includes an `isInputField` check to prevent interference with UI elements (like Chat).
 - **Interception**: If the user is focused on an `INPUT`, `TEXTAREA`, or `contenteditable`, the engine returns early.
 - **Keys Protected**: `Backspace` (Delete object), `Space` (Pan), `Ctrl+Z` (Undo).
+
+## 7. Proposed Keyboard Shortcut Manager Architecture (Future Enhancement)
+
+To modularize keyboard interactions and support custom key bindings, a new `ShortcutManager` module can be introduced.
+
+### Architectural Layout & Flow
+```mermaid
+flowchart TD
+    Window[Global window keydown / keyup] --> Guard{Target in input/textarea?}
+    Guard -->|Yes| Bubble[Allow default browser entry]
+    Guard -->|No| Map[ShortcutManager Mapping Lookup]
+    Map --> Match{Is Shortcut Registered?}
+    Match -->|Yes| Exec[Execute Registered Action / Command]
+    Match -->|No| Ignore[Ignore Key Event]
+```
+
+### Action Registration Design
+The `ShortcutManager` will store actions as callbacks or commands mapped to string key configurations:
+```javascript
+class ShortcutManager {
+  constructor(engineController) {
+    this.controller = engineController;
+    this.shortcuts = new Map();
+    this.initListeners();
+  }
+
+  register(keys, actionName, callback) {
+    this.shortcuts.set(keys.toLowerCase(), { actionName, callback });
+  }
+
+  handleEvent(event) {
+    if (this.isInputField(event.target)) return;
+    
+    const keyCombo = this.getEventKeyCombo(event);
+    const registered = this.shortcuts.get(keyCombo);
+    if (registered) {
+      event.preventDefault();
+      registered.callback(event);
+    }
+  }
+}
+```

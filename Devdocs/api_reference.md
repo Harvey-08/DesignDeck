@@ -59,6 +59,53 @@ All routes except `/api/auth/login` and `/api/auth/register` require a `Bearer <
 
 ---
 
+## AI Co-Pilot Chatbot (`/api/bot`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **POST** | `/api/bot/chat` | Send canvas context and user instructions to receive streamed AI responses and drawing commands (Server-Sent Events). |
+
+---
+
+## Folders & Workspaces (`/api/folders`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **POST** | `/api/folders` | Create a new folder workspace. |
+| **GET** | `/api/folders` | Retrieve all folders and child canvases. |
+| **PATCH** | `/api/folders/:id` | Update folder properties (rename, change color metadata). |
+| **DELETE** | `/api/folders/:id` | Delete a folder workspace. |
+
+---
+
+## Video Meetings & Recordings (`/api/meetings`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **POST** | `/api/meetings` | Create or schedule a new video collaboration room. |
+| **GET** | `/api/meetings/history` | Retrieve historical finished meetings. |
+| **GET** | `/api/meetings/:meetingId` | Retrieve details for a specific meeting room. |
+| **POST** | `/api/meetings/:meetingId/end` | Set meeting status to ended and close connection rooms. |
+| **GET** | `/api/meetings/:meetingId/messages` | Fetch chat messages sent during the meeting call. |
+| **POST** | `/api/meetings/:meetingId/recordings` | Save a screen share recording segment to Cloudinary. |
+| **GET** | `/api/meetings/:meetingId/recordings` | Retrieve all saved screen share recordings for a session. |
+| **POST** | `/api/meetings/:meetingId/start` | Trigger state check and start a scheduled meeting room. |
+| **POST** | `/api/meetings/:meetingId/cancel` | Cancel a scheduled meeting room. |
+| **POST** | `/api/meetings/:meetingId/invite` | Send meeting invitations to multiple users. |
+
+---
+
+## Notifications & Invites (`/api/notifications`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **GET** | `/api/notifications` | Fetch active user alerts, reminders, and canvas invitations. |
+| **PUT** | `/api/notifications/:id/read` | Mark a notification alert as read. |
+| **POST** | `/api/notifications/:id/accept` | Accept a canvas collaboration or workspace invitation. |
+| **POST** | `/api/notifications/:id/decline` | Decline a canvas collaboration or workspace invitation. |
+
+---
+
 ## Real-Time Collaboration Protocols
 
 | Method | Endpoint | Description |
