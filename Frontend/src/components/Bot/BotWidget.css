@@ -1,10 +1,12 @@
 .bot-widget-container {
   position: absolute;
-  bottom: 56px; /* Floating above the 40px footer + spacing */
+  bottom: 56px;
+  /* Floating above the 40px footer + spacing */
   right: 16px;
   z-index: 999;
   font-family: 'Inter', -apple-system, sans-serif;
   pointer-events: auto;
+  transition: right 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Floating Action Button (FAB) */
@@ -112,9 +114,11 @@
 .bot-messages-area::-webkit-scrollbar {
   width: 5px;
 }
+
 .bot-messages-area::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .bot-messages-area::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 99px;

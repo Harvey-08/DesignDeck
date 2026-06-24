@@ -9,24 +9,36 @@ import axios from 'axios';
 vi.mock('axios');
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
-    Plus: () => <div data-testid="icon-plus" />,
-    Layout: () => <div data-testid="icon-layout" />,
-    Clock: () => <div data-testid="icon-clock" />,
-    User: () => <div data-testid="icon-user" />,
-    ArrowRight: () => <div data-testid="icon-arrow-right" />,
-    Trash2: () => <div data-testid="icon-trash" />,
-    LogOut: () => <div data-testid="icon-logout" />,
-    Search: () => <div data-testid="icon-search" />,
-    Grid: () => <div data-testid="icon-grid" />,
-    List: () => <div data-testid="icon-list" />,
-    Settings: () => <div data-testid="icon-settings" />,
-    Users: () => <div data-testid="icon-users" />,
-    Star: () => <div data-testid="icon-star" />,
-    Filter: () => <div data-testid="icon-filter" />,
-    SortAsc: () => <div data-testid="icon-sort-asc" />,
-    SortDesc: () => <div data-testid="icon-sort-desc" />,
-}));
+vi.mock('lucide-react', () => {
+    const customMocks = {
+        Plus: (props) => <div data-testid="icon-plus" {...props} />,
+        Layout: (props) => <div data-testid="icon-layout" {...props} />,
+        Clock: (props) => <div data-testid="icon-clock" {...props} />,
+        User: (props) => <div data-testid="icon-user" {...props} />,
+        ArrowRight: (props) => <div data-testid="icon-arrow-right" {...props} />,
+        Trash2: (props) => <div data-testid="icon-trash" {...props} />,
+        LogOut: (props) => <div data-testid="icon-logout" {...props} />,
+        Search: (props) => <div data-testid="icon-search" {...props} />,
+        Grid: (props) => <div data-testid="icon-grid" {...props} />,
+        List: (props) => <div data-testid="icon-list" {...props} />,
+        Settings: (props) => <div data-testid="icon-settings" {...props} />,
+        Users: (props) => <div data-testid="icon-users" {...props} />,
+        Star: (props) => <div data-testid="icon-star" {...props} />,
+        Filter: (props) => <div data-testid="icon-filter" {...props} />,
+        SortAsc: (props) => <div data-testid="icon-sort-asc" {...props} />,
+        SortDesc: (props) => <div data-testid="icon-sort-desc" {...props} />,
+    };
+    return new Proxy(customMocks, {
+        get: (target, prop) => {
+            if (prop in target) return target[prop];
+            if (typeof prop === 'string' && /^[A-Z]/.test(prop)) {
+                target[prop] = (props) => <div data-testid={`icon-${prop.toLowerCase()}`} {...props} />;
+                return target[prop];
+            }
+            return target[prop];
+        }
+    });
+});
 
 const renderDashboard = () => {
     return render(
@@ -65,19 +77,27 @@ describe('Dashboard Visibility Flow', () => {
         axios.get.mockResolvedValue({ data: mockCanvases });
     });
 
-    it('should show both owned and shared canvases in the dashboard', async () => {
+    it('should show owned canvases under My Canvases and shared under Shared With Me', async () => {
         renderDashboard();
 
+        // 1. Click "My Canvases" tab
         await waitFor(() => {
-            const titles = screen.getAllByRole('heading', { level: 3 });
+            const myCanvasesTab = screen.getByRole('button', { name: /My Canvases/i });
+            myCanvasesTab.click();
+        });
 
-            expect(
-                titles.some(t => t.textContent === 'My Private Design')
-            ).toBe(true);
+        await waitFor(() => {
+            expect(screen.getByText('My Private Design')).toBeInTheDocument();
+            expect(screen.queryByText('Shared Team Project')).not.toBeInTheDocument();
+        });
 
-            expect(
-                titles.some(t => t.textContent === 'Shared Team Project')
-            ).toBe(true);
+        // 2. Click "Shared With Me" tab
+        const sharedTab = screen.getByRole('button', { name: /Shared With Me/i });
+        sharedTab.click();
+
+        await waitFor(() => {
+            expect(screen.getByText('Shared Team Project')).toBeInTheDocument();
+            expect(screen.queryByText('My Private Design')).not.toBeInTheDocument();
         });
 
         expect(axios.get).toHaveBeenCalledWith(
@@ -86,17 +106,19 @@ describe('Dashboard Visibility Flow', () => {
         );
     });
 
-    it('should render the correct number of canvas cards', async () => {
+    it('should render the correct canvases when tabs are selected', async () => {
         renderDashboard();
+
+        // Click "My Canvases"
+        await waitFor(() => {
+            screen.getByRole('button', { name: /My Canvases/i }).click();
+        });
 
         await waitFor(() => {
             const canvasTitles = screen.getAllByRole('heading', { level: 3 });
-            expect(canvasTitles).toHaveLength(2);
-
             const titleTexts = canvasTitles.map(t => t.textContent);
-
             expect(titleTexts).toContain('My Private Design');
-            expect(titleTexts).toContain('Shared Team Project');
+            expect(titleTexts).not.toContain('Shared Team Project');
         });
     });
 });

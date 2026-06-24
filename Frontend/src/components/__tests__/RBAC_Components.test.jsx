@@ -6,32 +6,44 @@ import TopBar from '../TopBar';
 import Toolbar from '../Toolbar';
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
-    Share2: () => <div data-testid="icon-share" />,
-    Download: () => <div data-testid="icon-download" />,
-    LogOut: () => <div data-testid="icon-logout" />,
-    Bell: () => <div data-testid="icon-bell" />,
-    Settings: () => <div data-testid="icon-settings" />,
-    Layout: () => <div data-testid="icon-layout" />,
-    Edit2: () => <div data-testid="icon-edit" />,
-    Check: () => <div data-testid="icon-check" />,
-    User: () => <div data-testid="icon-user" />,
-    Pencil: () => <div data-testid="icon-pencil" />,
-    MousePointer2: () => <div data-testid="icon-mouse" />,
-    Eraser: () => <div data-testid="icon-eraser" />,
-    Square: () => <div data-testid="icon-square" />,
-    Circle: () => <div data-testid="icon-circle" />,
-    Type: () => <div data-testid="icon-type" />,
-    PaintBucket: () => <div data-testid="icon-bucket" />,
-    Move: () => <div data-testid="icon-move" />,
-    PenTool: () => <div data-testid="icon-pen" />,
-    Triangle: () => <div data-testid="icon-triangle" />,
-    Hexagon: () => <div data-testid="icon-hexagon" />,
-    Undo2: () => <div data-testid="icon-undo" />,
-    Redo2: () => <div data-testid="icon-redo" />,
-    Trash2: () => <div data-testid="icon-trash" />,
-    Brush: () => <div data-testid="icon-brush" />,
-}));
+vi.mock('lucide-react', () => {
+    const customMocks = {
+        Share2: (props) => <div data-testid="icon-share" {...props} />,
+        Download: (props) => <div data-testid="icon-download" {...props} />,
+        LogOut: (props) => <div data-testid="icon-logout" {...props} />,
+        Bell: (props) => <div data-testid="icon-bell" {...props} />,
+        Settings: (props) => <div data-testid="icon-settings" {...props} />,
+        Layout: (props) => <div data-testid="icon-layout" {...props} />,
+        Edit2: (props) => <div data-testid="icon-edit" {...props} />,
+        Check: (props) => <div data-testid="icon-check" {...props} />,
+        User: (props) => <div data-testid="icon-user" {...props} />,
+        Pencil: (props) => <div data-testid="icon-pencil" {...props} />,
+        MousePointer2: (props) => <div data-testid="icon-mouse" {...props} />,
+        Eraser: (props) => <div data-testid="icon-eraser" {...props} />,
+        Square: (props) => <div data-testid="icon-square" {...props} />,
+        Circle: (props) => <div data-testid="icon-circle" {...props} />,
+        Type: (props) => <div data-testid="icon-type" {...props} />,
+        PaintBucket: (props) => <div data-testid="icon-bucket" {...props} />,
+        Move: (props) => <div data-testid="icon-move" {...props} />,
+        PenTool: (props) => <div data-testid="icon-pen" {...props} />,
+        Triangle: (props) => <div data-testid="icon-triangle" {...props} />,
+        Hexagon: (props) => <div data-testid="icon-hexagon" {...props} />,
+        Undo2: (props) => <div data-testid="icon-undo" {...props} />,
+        Redo2: (props) => <div data-testid="icon-redo" {...props} />,
+        Trash2: (props) => <div data-testid="icon-trash" {...props} />,
+        Brush: (props) => <div data-testid="icon-brush" {...props} />,
+    };
+    return new Proxy(customMocks, {
+        get: (target, prop) => {
+            if (prop in target) return target[prop];
+            if (typeof prop === 'string' && /^[A-Z]/.test(prop)) {
+                target[prop] = (props) => <div data-testid={`icon-${prop.toLowerCase()}`} {...props} />;
+                return target[prop];
+            }
+            return target[prop];
+        }
+    });
+});
 
 // Mock useNavigate
 const mockNavigate = vi.fn();

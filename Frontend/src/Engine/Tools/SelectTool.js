@@ -30,6 +30,19 @@ export class SelectTool extends BaseTool {
     this.dragStartX = canvasX;
     this.dragStartY = canvasY;
 
+    if (engine.state.userRole === 'viewer') {
+      const objectsAtPoint = engine.sceneManager.getObjectsAtPoint(canvasX, canvasY);
+      if (objectsAtPoint.length > 0) {
+        const clickedObj = objectsAtPoint[objectsAtPoint.length - 1];
+        engine.setSelectionAwareness([clickedObj.id]);
+        this._updateSelectionBounds(engine.getObject(clickedObj.id));
+      } else {
+        engine.setSelectionAwareness([]);
+        this.selectedBounds = null;
+      }
+      return;
+    }
+
     // 1. Special case: Resize/Rotate handles (only for single object select)
     if (engine.state.selectedObjectIds.length === 1 && this.selectedBounds) {
       const selectedId = engine.state.selectedObjectIds[0];

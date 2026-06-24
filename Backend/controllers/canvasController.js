@@ -1,6 +1,7 @@
 import Canvas from '../models/Canvas.js';
 import User from '../models/User.js';
 import Event from '../models/Event.js';
+import Notification from '../models/Notification.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { docs } = require('y-websocket/bin/utils');
@@ -51,11 +52,18 @@ export const getCanvas = async (req, res) => {
         }
 
         // Check permissions (Owner or Member)
-        const isOwner = canvas.owner?._id.equals(req.user._id);
-        const isMember = canvas.members.some(m => m.user?._id.equals(req.user._id));
+        const isOwner = canvas.owner && (canvas.owner._id ? canvas.owner._id.toString() === req.user._id.toString() : canvas.owner.toString() === req.user._id.toString());
+        const isMember = canvas.members.some(m => {
+            const memberId = m.user?._id || m.user;
+            return memberId && memberId.toString() === req.user._id.toString();
+        });
 
         if (!isOwner && !isMember) {
-            return res.status(403).json({ message: 'Not authorized to view this canvas' });
+            // Automatically add as a member (default role: 'editor') so they can collaborate and see it in "Shared With Me"
+            canvas.members.push({ user: req.user._id, role: 'editor' });
+            await canvas.save();
+            // Re-populate members user list
+            await canvas.populate('members.user', 'name email');
         }
 
         res.json(canvas);
@@ -126,22 +134,33 @@ export const inviteUser = async (req, res) => {
             return res.status(400).json({ message: 'User is already a member' });
         }
 
-        canvas.members.push({
-            user: userToInvite._id,
-            role: role || 'viewer'
+        // Check if already invited (pending notification)
+        const alreadyInvited = await Notification.findOne({
+            recipient: userToInvite._id,
+            canvasId: canvas.canvasId,
+            status: 'unread'
+        });
+        if (alreadyInvited) {
+            return res.status(400).json({ message: 'An invitation is already pending for this user' });
+        }
+
+        // Create invite notification
+        await Notification.create({
+            recipient: userToInvite._id,
+            sender: req.user._id,
+            type: 'canvas_invite',
+            canvasId: canvas.canvasId,
+            canvasName: canvas.name,
+            role: role || 'viewer',
+            status: 'unread'
         });
 
-        await canvas.save();
-
-        res.json({ message: 'User invited successfully', canvas });
+        res.json({ message: 'Invitation sent successfully' });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
 
-// @desc    Delete a canvas
-// @route   DELETE /api/canvas/:id
-// @access  Private (Owner only)
 export const deleteCanvas = async (req, res) => {
     try {
         const canvas = await Canvas.findOne({ canvasId: req.params.id });
@@ -150,21 +169,40 @@ export const deleteCanvas = async (req, res) => {
             return res.status(404).json({ message: 'Canvas not found' });
         }
 
-        // --- GUEST BYPASS ---
-        // For non-guest canvases, ensure ownership
-        if (!req.params.id.startsWith('guest-')) {
-            if (!req.user || (canvas.owner && canvas.owner.toString() !== req.user._id.toString())) {
-                return res.status(403).json({ message: 'Not authorized to delete this canvas' });
-            }
+        const isGuestCanvas = req.params.id.startsWith('guest-');
+        const isOwner = isGuestCanvas || (req.user && canvas.owner && canvas.owner.toString() === req.user._id.toString());
+
+        // Check if the current user is a member
+        const isMember = req.user && canvas.members && canvas.members.some(m => {
+            if (!m.user) return false;
+            const memberId = m.user._id ? m.user._id.toString() : m.user.toString();
+            return memberId === req.user._id.toString();
+        });
+
+        if (!isOwner && !isMember) {
+            return res.status(403).json({ message: 'Not authorized to delete or leave this canvas' });
         }
 
+        if (!isOwner && isMember) {
+            // User is a collaborator, not the owner. They want to "leave" the canvas.
+            // console.log(`[API] Member leaving canvas ${canvas.canvasId}. Removing user ${req.user._id} from members.`);
+            canvas.members = canvas.members.filter(m => {
+                if (!m.user) return false;
+                const memberId = m.user._id ? m.user._id.toString() : m.user.toString();
+                return memberId !== req.user._id.toString();
+            });
+            await canvas.save();
+            return res.json({ message: 'Successfully left the shared canvas' });
+        }
+
+        // If we are the owner:
         // If it's a master canvas (no parentId), perform cascading delete
         if (!canvas.parentId) {
-            console.log(`[API] Master canvas deletion detected. Performing cascading delete for groupId: ${canvas.groupId}`);
+            // console.log(`[API] Master canvas deletion detected. Performing cascading delete for groupId: ${canvas.groupId}`);
             await Canvas.deleteMany({ groupId: canvas.groupId || canvas.canvasId });
             res.json({ message: 'Master canvas and all its branches deleted successfully' });
         } else {
-            console.log(`[API] Branch deletion detected for canvasId: ${req.params.id}`);
+            // console.log(`[API] Branch deletion detected for canvasId: ${req.params.id}`);
             await Canvas.deleteOne({ canvasId: req.params.id });
             res.json({ message: 'Branch deleted successfully' });
         }
@@ -207,13 +245,13 @@ export const updateCanvasName = async (req, res) => {
     const { name } = req.body;
     const { id } = req.params;
 
-    console.log(`[API] Attempting to update canvas name. ID: ${id}, New Name: ${name}`);
+    // console.log(`[API] Attempting to update canvas name. ID: ${id}, New Name: ${name}`);
 
     try {
         const canvas = await Canvas.findOne({ canvasId: id });
 
         if (!canvas) {
-            console.log(`[API] Canvas ${id} not found in DB`);
+            // console.log(`[API] Canvas ${id} not found in DB`);
             return res.status(404).json({ message: 'Canvas not found' });
         }
 
@@ -234,7 +272,7 @@ export const updateCanvasName = async (req, res) => {
         canvas.name = name;
         const updatedCanvas = await canvas.save();
 
-        console.log(`[API] Canvas name updated successfully: ${updatedCanvas.name}`);
+        // console.log(`[API] Canvas name updated successfully: ${updatedCanvas.name}`);
         res.json(updatedCanvas);
     } catch (error) {
         console.error('[API] Update Canvas Name Error:', error);
@@ -260,7 +298,8 @@ export const removeMember = async (req, res) => {
 
         // Filter out the member robustly (handles both populated and unpopulated user ids)
         canvas.members = canvas.members.filter(m => {
-            const memberId = m.user && m.user._id ? m.user._id.toString() : m.user.toString();
+            if (!m.user) return false;
+            const memberId = m.user._id ? m.user._id.toString() : m.user.toString();
             return memberId !== req.params.userId;
         });
         await canvas.save();
@@ -342,7 +381,7 @@ export const branchCanvas = async (req, res) => {
 // @route   GET /api/canvas/:id/branches
 // @access  Private
 export const getRelatedBranches = async (req, res) => {
-    console.log('>>> [API ENTRY] getRelatedBranches called for ID:', req.params.id);
+    // console.log('>>> [API ENTRY] getRelatedBranches called for ID:', req.params.id);
     try {
         const canvas = await Canvas.findOne({ canvasId: req.params.id }).lean();
         if (!canvas) {
@@ -369,10 +408,10 @@ export const getRelatedBranches = async (req, res) => {
             isMaster: (!b.parentId || b.parentId === "")
         }));
 
-        console.log(`[DEBUG] getRelatedBranches for ${req.params.id}: returning ${processedBranches.length} branches`);
-        processedBranches.forEach(pb => {
-            console.log(`  - Branch: ${pb.name}, isMaster: ${pb.isMaster}, createdAt: ${pb.createdAt}`);
-        });
+        // console.log(`[DEBUG] getRelatedBranches for ${req.params.id}: returning ${processedBranches.length} branches`);
+        // processedBranches.forEach(pb => {
+        //     console.log(`  - Branch: ${pb.name}, isMaster: ${pb.isMaster}, createdAt: ${pb.createdAt}`);
+        // });
 
         // Ensure the source/master canvas itself is included in the list (fallback)
         const hasSelf = processedBranches.some(b => b.canvasId === canvas.canvasId);
@@ -627,12 +666,12 @@ export const updateMemberRole = async (req, res) => {
     const { role } = req.body; // 'editor' or 'viewer'
 
     try {
-        console.log(`[RoleUpdate] Request - canvasId: ${req.params.id}, userId: ${req.params.userId}, role: ${role}`);
+        // console.log(`[RoleUpdate] Request - canvasId: ${req.params.id}, userId: ${req.params.userId}, role: ${role}`);
         
         const canvas = await Canvas.findOne({ canvasId: req.params.id });
 
         if (!canvas) {
-            console.log(`[RoleUpdate] Canvas not found: ${req.params.id}`);
+            // console.log(`[RoleUpdate] Canvas not found: ${req.params.id}`);
             return res.status(404).json({ message: 'Canvas not found' });
         }
 
@@ -640,14 +679,14 @@ export const updateMemberRole = async (req, res) => {
         const canvasOwnerId = canvas.owner?._id || canvas.owner;
         const currentUserId = req.user?._id || req.user?.id;
 
-        console.log(`[RoleUpdate] Checking owner - canvasOwnerId: ${canvasOwnerId}, currentUserId: ${currentUserId}`);
+        // console.log(`[RoleUpdate] Checking owner - canvasOwnerId: ${canvasOwnerId}, currentUserId: ${currentUserId}`);
 
         if (!canvasOwnerId || !currentUserId || canvasOwnerId.toString() !== currentUserId.toString()) {
-            console.log(`[RoleUpdate] Forbidden: canvasOwnerId: ${canvasOwnerId}, currentUserId: ${currentUserId}`);
+            // console.log(`[RoleUpdate] Forbidden: canvasOwnerId: ${canvasOwnerId}, currentUserId: ${currentUserId}`);
             return res.status(403).json({ message: 'Only owner can manage member roles' });
         }
 
-        console.log(`[RoleUpdate] Members list:`, JSON.stringify(canvas.members));
+        // console.log(`[RoleUpdate] Members list:`, JSON.stringify(canvas.members));
 
         const memberIndex = canvas.members.findIndex(m => {
             if (!m.user) return false;
@@ -655,7 +694,7 @@ export const updateMemberRole = async (req, res) => {
             return memberId === req.params.userId;
         });
 
-        console.log(`[RoleUpdate] memberIndex found: ${memberIndex} for target userId: ${req.params.userId}`);
+        // console.log(`[RoleUpdate] memberIndex found: ${memberIndex} for target userId: ${req.params.userId}`);
 
         if (memberIndex === -1) {
             return res.status(404).json({ message: 'Member not found' });
@@ -664,11 +703,11 @@ export const updateMemberRole = async (req, res) => {
         canvas.members[memberIndex].role = role;
         await canvas.save();
 
-        console.log(`[RoleUpdate] Role updated successfully to ${role}`);
+        // console.log(`[RoleUpdate] Role updated successfully to ${role}`);
 
         const io = req.app.get('socketio');
         if (io) {
-            console.log(`[RoleUpdate] Broadcasting member_role_updated to room ${req.params.id} for user ${req.params.userId}`);
+            // console.log(`[RoleUpdate] Broadcasting member_role_updated to room ${req.params.id} for user ${req.params.userId}`);
             io.to(req.params.id).emit('member_role_updated', {
                 userId: req.params.userId,
                 role: role
@@ -678,6 +717,88 @@ export const updateMemberRole = async (req, res) => {
         res.json({ message: 'Member role updated successfully', canvas });
     } catch (error) {
         console.error(`[RoleUpdate] Error:`, error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+export const moveCanvas = async (req, res) => {
+    const { folderId } = req.body;
+    try {
+        const canvas = await Canvas.findOne({ canvasId: req.params.id });
+        if (!canvas) return res.status(404).json({ message: 'Canvas not found' });
+        
+        const isOwner = canvas.owner && (canvas.owner._id ? canvas.owner._id.toString() === req.user._id.toString() : canvas.owner.toString() === req.user._id.toString());
+        const isMember = canvas.members.some(m => {
+            const memberId = m.user?._id || m.user;
+            return memberId && memberId.toString() === req.user._id.toString();
+        });
+
+        if (!isOwner && !isMember) return res.status(403).json({ message: 'Not authorized' });
+
+        canvas.folderId = folderId || null;
+        await canvas.save();
+
+        res.json(canvas);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+export const favoriteCanvas = async (req, res) => {
+    try {
+        const canvas = await Canvas.findOne({ canvasId: req.params.id });
+        if (!canvas) return res.status(404).json({ message: 'Canvas not found' });
+
+        const isOwner = canvas.owner && (canvas.owner._id ? canvas.owner._id.toString() === req.user._id.toString() : canvas.owner.toString() === req.user._id.toString());
+        const isMember = canvas.members.some(m => {
+            const memberId = m.user?._id || m.user;
+            return memberId && memberId.toString() === req.user._id.toString();
+        });
+
+        if (!isOwner && !isMember) return res.status(403).json({ message: 'Not authorized' });
+
+        canvas.isFavorite = !canvas.isFavorite;
+        await canvas.save();
+        res.json(canvas);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+export const searchCanvases = async (req, res) => {
+    const { query, favorite, folder } = req.query;
+    try {
+        const filter = {
+            $and: [
+                {
+                    $or: [
+                        { owner: req.user._id },
+                        { 'members.user': req.user._id }
+                    ]
+                },
+                {
+                    $or: [
+                        { parentId: { $exists: false } },
+                        { parentId: null },
+                        { parentId: "" }
+                    ]
+                }
+            ]
+        };
+
+        if (query) {
+            filter.name = { $regex: query, $options: 'i' };
+        }
+        if (favorite === 'true') {
+            filter.isFavorite = true;
+        }
+        if (folder) {
+            filter.folderId = folder === 'null' ? null : folder;
+        }
+
+        const canvases = await Canvas.find(filter).sort({ updatedAt: -1 });
+        res.json(canvases);
+    } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
@@ -699,5 +820,8 @@ export default {
     removeTimelineEventTag,
     rollbackCanvas,
     generateLink,
-    joinViaLink
+    joinViaLink,
+    moveCanvas,
+    favoriteCanvas,
+    searchCanvases
 };

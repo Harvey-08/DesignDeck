@@ -5,7 +5,7 @@ import { API_BASE_URL } from '../config';
 
 const ShareDialog = ({ isOpen, onClose, canvasId, owner, members, onUpdate }) => {
     const [identifier, setIdentifier] = useState('');
-    const [role, setRole] = useState('viewer');
+    const [role, setRole] = useState('editor');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');

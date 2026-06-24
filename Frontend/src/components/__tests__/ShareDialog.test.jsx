@@ -8,19 +8,31 @@ import axios from 'axios';
 vi.mock('axios');
 
 // Mock lucide-react (to simplify the DOM and avoid icon rendering issues in tests)
-vi.mock('lucide-react', () => ({
-    X: () => <div data-testid="icon-x" />,
-    UserPlus: () => <div data-testid="icon-user-plus" />,
-    Mail: () => <div data-testid="icon-mail" />,
-    User: () => <div data-testid="icon-user" />,
-    Trash2: () => <div data-testid="icon-trash" />,
-    Loader2: () => <div data-testid="icon-loader" />,
-    ShieldCheck: () => <div data-testid="icon-shield" />,
-    Crown: () => <div data-testid="icon-crown" />,
-    Share2: () => <div data-testid="icon-share" />,
-    Copy: () => <div data-testid="icon-copy" />,
-    Check: () => <div data-testid="icon-check" />,
-}));
+vi.mock('lucide-react', () => {
+    const customMocks = {
+        X: (props) => <div data-testid="icon-x" {...props} />,
+        UserPlus: (props) => <div data-testid="icon-user-plus" {...props} />,
+        Mail: (props) => <div data-testid="icon-mail" {...props} />,
+        User: (props) => <div data-testid="icon-user" {...props} />,
+        Trash2: (props) => <div data-testid="icon-trash" {...props} />,
+        Loader2: (props) => <div data-testid="icon-loader" {...props} />,
+        ShieldCheck: (props) => <div data-testid="icon-shield" {...props} />,
+        Crown: (props) => <div data-testid="icon-crown" {...props} />,
+        Share2: (props) => <div data-testid="icon-share" {...props} />,
+        Copy: (props) => <div data-testid="icon-copy" {...props} />,
+        Check: (props) => <div data-testid="icon-check" {...props} />,
+    };
+    return new Proxy(customMocks, {
+        get: (target, prop) => {
+            if (prop in target) return target[prop];
+            if (typeof prop === 'string' && /^[A-Z]/.test(prop)) {
+                target[prop] = (props) => <div data-testid={`icon-${prop.toLowerCase()}`} {...props} />;
+                return target[prop];
+            }
+            return target[prop];
+        }
+    });
+});
 
 describe('ShareDialog Component', () => {
     const mockOnClose = vi.fn();
@@ -131,7 +143,7 @@ describe('ShareDialog Component', () => {
         render(<ShareDialog {...defaultProps} />);
 
         const emailInput = screen.getByPlaceholderText(/User Email/i);
-        const roleSelect = screen.getByRole('combobox');
+        const roleSelect = screen.getAllByRole('combobox')[0];
         const sendButton = screen.getByRole('button', { name: /send invite/i });
 
         fireEvent.change(emailInput, { target: { value: 'editor@example.com' } });
@@ -153,7 +165,7 @@ describe('ShareDialog Component', () => {
         render(<ShareDialog {...defaultProps} />);
 
         const emailInput = screen.getByPlaceholderText(/User Email/i);
-        const roleSelect = screen.getByRole('combobox');
+        const roleSelect = screen.getAllByRole('combobox')[0];
         const sendButton = screen.getByRole('button', { name: /send invite/i });
 
         fireEvent.change(emailInput, { target: { value: 'viewer@example.com' } });

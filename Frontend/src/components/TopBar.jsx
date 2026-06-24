@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Share2, Download, Upload, LogOut, Bell, Settings, Layout, Edit2, Check, User, GitBranch, ChevronDown, Plus, Trash2, Clock, Tag, MessageSquare } from 'lucide-react';
+import { Share2, Download, Upload, LogOut, Bell, Settings, Layout, Edit2, Check, User, GitBranch, ChevronDown, Plus, Trash2, Clock, Tag, MessageSquare, Video } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ShareDialog from './ShareDialog';
 import CollaboratorList from './CollaboratorList';
@@ -22,6 +22,8 @@ export default function TopBar({
   setIsTimelineOpen,
   isChatOpen,
   setIsChatOpen,
+  isMeetingOpen,
+  setIsMeetingOpen,
   isAuthorshipMode,
   onAuthorshipToggle,
   engine
@@ -303,6 +305,8 @@ export default function TopBar({
           >
             <MessageSquare className="w-4 h-4" />
           </button>
+
+
 
           <div className="relative flex items-center gap-2" ref={shareRef}>
             <button

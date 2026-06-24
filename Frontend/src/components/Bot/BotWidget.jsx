@@ -10,7 +10,7 @@ const QUICK_PROMPTS = [
   "How do I tag a timeline milestone?"
 ];
 
-export default function BotWidget({ canvasEngineRef }) {
+export default function BotWidget({ canvasEngineRef, style, isDark = false }) {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([
@@ -112,13 +112,30 @@ export default function BotWidget({ canvasEngineRef }) {
         }
       }
 
-      // Check if LLM outputted action sequences
+      // Resiliently check if LLM outputted action sequences in any common format
+      let actionsJson = null;
       const actionsMatch = accumulatedText.match(/<actions>([\s\S]*?)<\/actions>/);
       if (actionsMatch && actionsMatch[1]) {
+        actionsJson = actionsMatch[1].trim();
+      } else {
+        // Fallback 1: Match standard markdown code blocks (e.g. ```json ... ``` or ``` ... ```)
+        const codeBlockMatch = accumulatedText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (codeBlockMatch && codeBlockMatch[1]) {
+          actionsJson = codeBlockMatch[1].trim();
+        } else {
+          // Fallback 2: Search for any JSON array block matching [{"type": ...}]
+          const arrayMatch = accumulatedText.match(/(\[\s*\{[\s\S]*\}\s*\])/);
+          if (arrayMatch && arrayMatch[1]) {
+            actionsJson = arrayMatch[1].trim();
+          }
+        }
+      }
+
+      if (actionsJson) {
         try {
-          const actions = JSON.parse(actionsMatch[1].trim());
-          console.log('[BotWidget] Parsing action toolcalls:', actions);
-          if (engine) {
+          const actions = JSON.parse(actionsJson);
+          console.log('[BotWidget] Resiliently parsed action toolcalls:', actions);
+          if (engine && Array.isArray(actions)) {
             engine.executeAIActions(actions);
           }
         } catch (e) {
@@ -134,13 +151,20 @@ export default function BotWidget({ canvasEngineRef }) {
     }
   };
 
-  // Filters out the technical XML action block from the displayed chat bubble
+  // Filters out technical action tags, markdown JSON blocks, and raw JSON arrays from display
   const getCleanText = (text) => {
-    return text.replace(/<actions>[\s\S]*?<\/actions>/, '').trim();
+    let clean = text.replace(/<actions>[\s\S]*?<\/actions>/g, '');
+    clean = clean.replace(/```(?:json)?\s*\[[\s\S]*?\]\s*```/g, '');
+    clean = clean.replace(/\[\s*\{[\s\S]*?\}\s*\]/g, '');
+    return clean.trim();
   };
 
   return (
-    <div className="bot-widget-container">
+    <div 
+      className="bot-widget-container" 
+      style={style} 
+      data-theme={isDark ? 'dark' : undefined}
+    >
       {/* Expand/Collapse Floating Action Button */}
       {!isOpen && (
         <button 

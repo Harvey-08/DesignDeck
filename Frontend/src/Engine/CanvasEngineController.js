@@ -43,6 +43,7 @@ export class CanvasEngineController {
     this.yLayers = this.doc.getArray('layers');
     // === CHAT ===
     this.yChat = this.doc.getArray('chatMessages');
+    this.yDocMeta = this.doc.getMap('docMeta');
 
     // === CORE STATE ===
     this.state = {
@@ -92,7 +93,8 @@ export class CanvasEngineController {
 
     this.setupPointerListeners();
     this.setupWindowListeners();
-    window.addEventListener('engineRenderRequest', () => this.render());
+    this._engineRenderRequestHandler = () => this.render();
+    window.addEventListener('engineRenderRequest', this._engineRenderRequestHandler);
     this.setupYjsListeners();
 
     // Wait for sync before initializing
@@ -113,6 +115,10 @@ export class CanvasEngineController {
           } else {
             console.log('[Yjs] Existing state found, syncing to engine');
             this.syncFromYjs();
+          }
+          const remoteBgColor = this.yDocMeta.get('backgroundColor');
+          if (remoteBgColor) {
+            this.state.backgroundColor = remoteBgColor;
           }
         }, 500);
       }
@@ -177,6 +183,13 @@ export class CanvasEngineController {
     this.yLayers.observe(() => {
       this.syncFromYjs();
     });
+    this.yDocMeta.observe(() => {
+      const bgColor = this.yDocMeta.get('backgroundColor');
+      if (bgColor && bgColor !== this.state.backgroundColor) {
+        this.state.backgroundColor = bgColor;
+        this.render();
+      }
+    });
 
     this.doc.getMap('sessionMeta').observe((event) => {
       if (event.keysChanged.has('sessionWarning')) {
@@ -187,49 +200,63 @@ export class CanvasEngineController {
       }
     });
 
-    this.knownUsers = new Map();
+    this.onlineUsersMap = new Map();
+    this.currentOnlineUserIds = new Set();
+
     this.awareness.on('change', (changes) => {
       const states = this.awareness.getStates();
+      const localState = this.awareness.getLocalState();
+      const localUserId = localState?.user?.id;
 
-      changes.added.forEach(clientId => {
+      // 1. Gather all active remote users currently present
+      const activeRemoteUsers = new Map(); // userId -> userObject
+      
+      states.forEach((state, clientId) => {
         if (clientId === this.doc.clientID) return;
-        const state = states.get(clientId);
-        if (state && state.user) {
-          this.knownUsers.set(clientId, state.user);
-          dispatchCollabEvent('USER_JOINED', state.user);
+        if (state && state.user && state.user.id) {
+          if (localUserId && state.user.id === localUserId) return;
+          activeRemoteUsers.set(state.user.id, state.user);
         }
       });
 
-      changes.removed.forEach(clientId => {
-        if (clientId === this.doc.clientID) return;
-        const user = this.knownUsers.get(clientId);
-        if (user) {
+      // 2. Identify newly joined users
+      activeRemoteUsers.forEach((user, userId) => {
+        if (!this.currentOnlineUserIds.has(userId)) {
+          this.currentOnlineUserIds.add(userId);
+          this.onlineUsersMap.set(userId, user);
+          dispatchCollabEvent('USER_JOINED', user);
+        }
+      });
+
+      // 3. Identify users who left
+      this.currentOnlineUserIds.forEach(userId => {
+        if (!activeRemoteUsers.has(userId)) {
+          const user = this.onlineUsersMap.get(userId) || { name: 'A user', id: userId };
           dispatchCollabEvent('USER_LEFT', user);
-          this.knownUsers.delete(clientId);
+          this.currentOnlineUserIds.delete(userId);
+          this.onlineUsersMap.delete(userId);
         }
       });
 
+      // 4. Handle object locks on changes.updated
       changes.updated.forEach(clientId => {
         if (clientId === this.doc.clientID) return;
         const state = states.get(clientId);
+        if (state && state.user && state.user.id) {
+          if (localUserId && state.user.id === localUserId) return;
 
-        // Handle deferred/updated joins
-        if (state && state.user && !this.knownUsers.has(clientId)) {
-          this.knownUsers.set(clientId, state.user);
-          dispatchCollabEvent('USER_JOINED', state.user);
-        }
-
-        // Check for Object Locks (Edit Alerts - User Story 2)
-        // Only fire once per 30 seconds per remote user to prevent toast spam
-        if (state && state.selection && state.selection.length > 0) {
-          const overlap = state.selection.some(id => this.state.selectedObjectIds.includes(id));
-          if (overlap && state.user) {
-            const now = Date.now();
-            const lastAlert = this._objectLockCooldowns?.get(clientId) || 0;
-            if (now - lastAlert > 30000) {
-              if (!this._objectLockCooldowns) this._objectLockCooldowns = new Map();
-              this._objectLockCooldowns.set(clientId, now);
-              dispatchCollabEvent('OBJECT_LOCKED', state.user);
+          // Check for Object Locks (Edit Alerts - User Story 2)
+          // Only fire once per 30 seconds per remote user to prevent toast spam
+          if (state.selection && state.selection.length > 0) {
+            const overlap = state.selection.some(id => this.state.selectedObjectIds.includes(id));
+            if (overlap) {
+              const now = Date.now();
+              const lastAlert = this._objectLockCooldowns?.get(state.user.id) || 0;
+              if (now - lastAlert > 30000) {
+                if (!this._objectLockCooldowns) this._objectLockCooldowns = new Map();
+                this._objectLockCooldowns.set(state.user.id, now);
+                dispatchCollabEvent('OBJECT_LOCKED', state.user);
+              }
             }
           }
         }
@@ -580,6 +607,29 @@ export class CanvasEngineController {
     this.state.brushOptions = { ...this.state.brushOptions, ...options };
     this.dispatchStateChange('brushOptions', this.state.brushOptions);
     this.showFeedback();
+
+    if (this.state.selectedObjectIds.length > 0 && this.canEdit()) {
+      this.doc.transact(() => {
+        this.state.selectedObjectIds.forEach(id => {
+          const obj = this.getObject(id);
+          if (!obj) return;
+          const currentStyle = obj.style || {};
+          const updates = {};
+          
+          if (options.color !== undefined) {
+            updates.color = options.color;
+            if (currentStyle.fillColor && currentStyle.fillColor !== 'transparent') {
+              updates.fillColor = options.color;
+            }
+          }
+          if (options.width !== undefined) updates.width = options.width;
+          if (options.opacity !== undefined) updates.opacity = options.opacity;
+          if (options.fontFamily !== undefined) updates.fontFamily = options.fontFamily;
+          
+          this.updateObject(id, { style: { ...currentStyle, ...updates } });
+        });
+      });
+    }
   }
 
   getBrushOptions() {
@@ -838,6 +888,20 @@ export class CanvasEngineController {
   setFillEnabled(enabled) {
     this.state.fillEnabled = enabled;
     this.dispatchStateChange('fillEnabled', enabled);
+
+    if (this.state.selectedObjectIds.length > 0 && this.canEdit()) {
+      this.doc.transact(() => {
+        this.state.selectedObjectIds.forEach(id => {
+          const obj = this.getObject(id);
+          if (!obj) return;
+          const currentStyle = obj.style || {};
+          const fillColor = enabled 
+            ? (currentStyle.color || this.state.brushOptions.color || '#217BF4') 
+            : 'transparent';
+          this.updateObject(id, { style: { ...currentStyle, fillColor } });
+        });
+      });
+    }
   }
 
   setEraserStrength(strength) {
@@ -895,6 +959,10 @@ export class CanvasEngineController {
       return;
     }
 
+    if (this.state.userRole === 'viewer' && this.state.activeTool !== 'select') {
+      return;
+    }
+
     const coords = this.screenToCanvasCoords(event.clientX, event.clientY);
     this.state.isDrawing = true;
 
@@ -922,7 +990,11 @@ export class CanvasEngineController {
     this.pointerY = coords.y;
 
     // Update awareness for cursor tracking
-    this.awareness.setLocalStateField('cursor', coords);
+    this.awareness.setLocalStateField('cursor', {
+      x: coords.x,
+      y: coords.y,
+      updatedAt: Date.now()
+    });
     this.awareness.setLocalStateField('status', 'active');
 
     // Clear existing idle timer
@@ -950,6 +1022,10 @@ export class CanvasEngineController {
       return;
     }
 
+    if (this.state.userRole === 'viewer' && this.state.activeTool !== 'select') {
+      return;
+    }
+
     const toolEvent = {
       clientX: event.clientX,
       clientY: event.clientY,
@@ -969,6 +1045,10 @@ export class CanvasEngineController {
     this.state.isPanning = false;
     this.state.isDrawing = false;
     const coords = this.screenToCanvasCoords(event.clientX, event.clientY);
+
+    if (this.state.userRole === 'viewer' && this.state.activeTool !== 'select') {
+      return;
+    }
 
     const toolEvent = {
       button: event.button,
@@ -1004,6 +1084,11 @@ export class CanvasEngineController {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.ctx.save();
+    
+    // Scale by device pixel ratio for Retina / high-DPI displays
+    const dpr = window.devicePixelRatio || 1;
+    this.ctx.scale(dpr, dpr);
+
     this.ctx.translate(this.state.pan.x, this.state.pan.y);
     this.ctx.scale(this.state.zoom, this.state.zoom);
 
@@ -1154,6 +1239,11 @@ export class CanvasEngineController {
       const cursor = state.cursor;
       if (!user || !cursor) return;
       if (this.state.hiddenPointers.has(user.id)) return; // US7: Hide Distractions
+
+      // Filter out stale cursors that haven't updated in 5 seconds
+      if (cursor.updatedAt && Date.now() - cursor.updatedAt > 5000) {
+        return;
+      }
 
       const color = user.color || '#F59E0B';
       const name = user.name || 'User';
@@ -1367,10 +1457,11 @@ export class CanvasEngineController {
     const zoomFactor = Math.min(1, 1 / this.state.zoom);
     const finalOpacity = baseOpacity * 0.8 * zoomFactor; // Increased multiplier significantly
 
+    const dpr = window.devicePixelRatio || 1;
     const startX = Math.floor(-this.state.pan.x / this.state.zoom / gridSize) * gridSize;
     const startY = Math.floor(-this.state.pan.y / this.state.zoom / gridSize) * gridSize;
-    const endX = startX + (this.canvas.width / this.state.zoom) + gridSize;
-    const endY = startY + (this.canvas.height / this.state.zoom) + gridSize;
+    const endX = startX + (this.canvas.width / dpr / this.state.zoom) + gridSize;
+    const endY = startY + (this.canvas.height / dpr / this.state.zoom) + gridSize;
 
     this.ctx.strokeStyle = `rgba(148, 163, 184, ${finalOpacity})`; // Even darker slate gray #94A3B8 for better visibility
     this.ctx.lineWidth = 1 / this.state.zoom;
@@ -1717,6 +1808,15 @@ export class CanvasEngineController {
         try {
           switch (action.type) {
             case 'DRAW_SHAPE': {
+              if (action.shape === 'text') {
+                const textColor = action.color || this.state.brushOptions?.color || '#217BF4';
+                this.addObject({
+                  type: 'text',
+                  geometry: { x: action.x, y: action.y, text: action.label || 'Text Box', width: 180, height: 40 },
+                  style: { color: textColor, fontSize: 20 }
+                });
+                break;
+              }
               const geom = action.shape === 'circle'
                 ? { cx: action.x, cy: action.y, radius: action.width ? action.width / 2 : 40 }
                 : (action.shape === 'line' || action.shape === 'arrow')
@@ -1807,16 +1907,19 @@ export class CanvasEngineController {
             }
 
             case 'ADD_TEXT': {
+              const textColor = action.color || this.state.brushOptions?.color || '#217BF4';
               this.addObject({
                 type: 'text',
                 geometry: { x: action.x, y: action.y, text: action.text || 'Text Box', width: 180, height: 40 },
-                style: { color: action.color || '#000000', fontSize: action.fontSize || 20 }
+                style: { color: textColor, fontSize: action.fontSize || 20 }
               });
               break;
             }
 
             case 'FILL_BACKGROUND': {
-              this.state.backgroundColor = action.color || '#FFFFFF';
+              const color = action.color || '#FFFFFF';
+              this.state.backgroundColor = color;
+              this.yDocMeta.set('backgroundColor', color);
               break;
             }
 
@@ -1967,6 +2070,9 @@ export class CanvasEngineController {
     this.isAnimationRunning = false;
     this.provider.disconnect();
     this.doc.destroy();
+    if (this._engineRenderRequestHandler) {
+      window.removeEventListener('engineRenderRequest', this._engineRenderRequestHandler);
+    }
   }
 }
 

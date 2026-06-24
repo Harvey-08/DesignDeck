@@ -35,6 +35,11 @@ const canvasSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
+    folderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Folder',
+        default: null,
+    },
     groupId: {
         type: String,
         index: true,

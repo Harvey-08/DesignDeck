@@ -17,9 +17,9 @@ export default function SidebarPanel({ engine, layers, activeLayerId, actions, p
         }}
       />
 
-      <div className="relative flex-1 flex flex-col min-h-0 divide-y divide-slate-100">
+      <div className="relative flex-1 flex flex-col min-h-0 overflow-y-auto custom-scrollbar divide-y divide-slate-100">
         {/* Layer Section */}
-        <section className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <section className="flex-1 min-h-[250px] flex flex-col overflow-hidden">
           <LayersPanel
             layers={layers}
             activeId={activeLayerId}

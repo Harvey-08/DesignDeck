@@ -1,11 +1,9 @@
-import dotenv from 'dotenv';
+import './config/env.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 console.log('--- Environment Check ---');
 console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
@@ -31,7 +29,13 @@ import authRoutes from './routes/authRoutes.js';
 import canvasRoutes from './routes/canvasRoutes.js';
 import commentRoutes from './routes/commentRoutes.js';
 import botRoutes from './routes/botRoutes.js';
+import meetingRoutes from './routes/meetingRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import MeetingMessage from './models/MeetingMessage.js';
+import Meeting from './models/Meeting.js';
+import Notification from './models/Notification.js';
 import { Server } from "socket.io";
+import folderRoutes from './routes/folderRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT;
@@ -45,6 +49,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/canvas', canvasRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/bot', botRoutes);
+app.use('/api/meetings', meetingRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/folders', folderRoutes);
 
 // Health Endpoint
 app.get('/', (req, res) => {
@@ -110,6 +117,11 @@ io.on('connection', (socket) => {
     socket.join(sessionId);
   });
 
+  socket.on('host-control-change', (data) => {
+    const { roomId, key, value } = data;
+    io.to(`meeting:${roomId}`).emit('host-control-updated', { key, value });
+  });
+
   socket.on('add_object_comment', async (data) => {
     try {
       const { sessionId, objectId, message, user } = data;
@@ -124,6 +136,174 @@ io.on('connection', (socket) => {
       io.to(sessionId).emit('object_comment_added', newComment);
     } catch (error) {
       console.error('Socket error adding comment:', error);
+    }
+  });
+
+  // ----------------------------------------------------
+  // WebRTC Meeting Signaling & Chat Handlers
+  // ----------------------------------------------------
+  socket.on('join-room', async (data) => {
+    const { roomId, userId, name, isAudioMuted, isVideoDisabled, isSharingScreen } = data;
+    if (!roomId || !userId) return;
+
+    // Force cleanup of any existing socket connection for the same user in this room
+    const clients = io.sockets.adapter.rooms.get(`meeting:${roomId}`);
+    if (clients) {
+      for (const clientId of clients) {
+        if (clientId !== socket.id) {
+          const clientSocket = io.sockets.sockets.get(clientId);
+          if (clientSocket && clientSocket.meetingUser && clientSocket.meetingUser.userId === userId) {
+            console.log(`[Socket] Force removing duplicate socket connection ${clientId} for user ${name}`);
+            socket.to(`meeting:${roomId}`).emit('user-left', {
+              socketId: clientId
+            });
+            clientSocket.leave(`meeting:${roomId}`);
+            clientSocket.meetingRoomId = null;
+          }
+        }
+      }
+    }
+
+    socket.meetingRoomId = roomId;
+    socket.meetingUser = { userId, name, isAudioMuted, isVideoDisabled, isSharingScreen };
+    await socket.join(`meeting:${roomId}`);
+
+    console.log(`[Socket] Peer ${name} (${userId}) joined meeting room: ${roomId}`);
+
+    // Update participants in MongoDB if meeting is active
+    try {
+      const meeting = await Meeting.findOne({ meetingId: roomId });
+      if (meeting && meeting.status === 'active') {
+        const alreadyIn = meeting.participants.some(p => p.user.toString() === userId.toString());
+        if (!alreadyIn) {
+          meeting.participants.push({ user: userId, joinedAt: new Date() });
+          await meeting.save();
+        }
+      }
+    } catch (dbErr) {
+      console.error('Error updating meeting participants in DB:', dbErr);
+    }
+
+    // Get active sockets in this meeting room
+    const roomClients = io.sockets.adapter.rooms.get(`meeting:${roomId}`);
+    const activePeers = [];
+    if (roomClients) {
+      for (const clientId of roomClients) {
+        if (clientId !== socket.id) {
+          const clientSocket = io.sockets.sockets.get(clientId);
+          if (clientSocket && clientSocket.meetingUser) {
+            activePeers.push({
+              socketId: clientId,
+              user: clientSocket.meetingUser
+            });
+          }
+        }
+      }
+    }
+
+    // Send existing peers list to the newly joined peer
+    socket.emit('meeting-users', activePeers);
+
+    // Notify other peers that a new user has joined
+    socket.to(`meeting:${roomId}`).emit('user-joined', {
+      socketId: socket.id,
+      user: socket.meetingUser
+    });
+  });
+
+  socket.on('offer', (data) => {
+    const { target, offer } = data;
+    io.to(target).emit('offer', {
+      sender: socket.id,
+      offer
+    });
+  });
+
+  socket.on('answer', (data) => {
+    const { target, answer } = data;
+    io.to(target).emit('answer', {
+      sender: socket.id,
+      answer
+    });
+  });
+
+  socket.on('ice-candidate', (data) => {
+    const { target, candidate } = data;
+    io.to(target).emit('ice-candidate', {
+      sender: socket.id,
+      candidate
+    });
+  });
+
+  socket.on('leave-room', (data) => {
+    const { roomId } = data;
+    if (roomId) {
+      socket.to(`meeting:${roomId}`).emit('user-left', {
+        socketId: socket.id
+      });
+      socket.leave(`meeting:${roomId}`);
+      console.log(`[Socket] Peer ${socket.meetingUser?.name} left meeting room: ${roomId}`);
+    }
+  });
+
+  socket.on('peer-toggle-audio', (data) => {
+    const { roomId, isMuted } = data;
+    if (socket.meetingUser) {
+      socket.meetingUser.isAudioMuted = isMuted;
+    }
+    socket.to(`meeting:${roomId}`).emit('peer-toggle-audio', {
+      senderSocketId: socket.id,
+      isMuted
+    });
+  });
+
+  socket.on('peer-toggle-video', (data) => {
+    const { roomId, isVideoOff } = data;
+    if (socket.meetingUser) {
+      socket.meetingUser.isVideoDisabled = isVideoOff;
+    }
+    socket.to(`meeting:${roomId}`).emit('peer-toggle-video', {
+      senderSocketId: socket.id,
+      isVideoOff
+    });
+  });
+
+  socket.on('peer-toggle-screen', (data) => {
+    const { roomId, isSharingScreen } = data;
+    if (socket.meetingUser) {
+      socket.meetingUser.isSharingScreen = isSharingScreen;
+    }
+    socket.to(`meeting:${roomId}`).emit('peer-toggle-screen', {
+      senderSocketId: socket.id,
+      isSharingScreen
+    });
+  });
+
+  socket.on('chat-message', async (data) => {
+    const { roomId, senderId, senderName, message } = data;
+    if (!roomId || !senderId || !message) return;
+
+    try {
+      const newMessage = await MeetingMessage.create({
+        meetingId: roomId,
+        sender: senderId,
+        senderName,
+        message,
+        timestamp: new Date()
+      });
+
+      io.to(`meeting:${roomId}`).emit('chat-message', newMessage);
+    } catch (err) {
+      console.error('Error handling chat-message socket event:', err);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.meetingRoomId) {
+      socket.to(`meeting:${socket.meetingRoomId}`).emit('user-left', {
+        socketId: socket.id
+      });
+      console.log(`[Socket] Peer ${socket.meetingUser?.name} disconnected from meeting room: ${socket.meetingRoomId}`);
     }
   });
 });
@@ -277,6 +457,55 @@ setPersistence({
     }
   }
 });
+
+// ----------------------------------------------------
+// Meeting Scheduler Poller (5-Minute Alert notifications)
+// ----------------------------------------------------
+setInterval(async () => {
+  try {
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+    const upcomingMeetings = await Meeting.find({
+      status: 'scheduled',
+      notifiedBefore: { $ne: true },
+      scheduledAt: { $lte: fiveMinutesFromNow, $gte: new Date(Date.now() - 10 * 60 * 1000) } // Start in next 5m, or slightly past due (up to 10m ago) in case server was restarted
+    });
+
+    for (const meeting of upcomingMeetings) {
+      console.log(`[Scheduler] Meeting "${meeting.title}" (${meeting.meetingId}) is starting in <= 5 minutes. Sending notifications...`);
+
+      // Notify both host and all invited users
+      const recipients = new Set();
+      if (meeting.host) recipients.add(meeting.host.toString());
+      for (const invitee of meeting.invitedUsers || []) {
+        const declinedNotif = await Notification.findOne({
+          recipient: invitee,
+          meetingId: meeting.meetingId,
+          type: 'meeting_invite',
+          status: 'declined'
+        });
+        if (!declinedNotif) {
+          recipients.add(invitee.toString());
+        }
+      }
+
+      for (const userId of recipients) {
+        await Notification.create({
+          recipient: userId,
+          sender: meeting.host,
+          type: 'meeting_reminder',
+          meetingId: meeting.meetingId,
+          meetingTitle: meeting.title,
+          status: 'unread'
+        });
+      }
+
+      meeting.notifiedBefore = true;
+      await meeting.save();
+    }
+  } catch (error) {
+    console.error('[Scheduler] Error in meeting reminder poller:', error);
+  }
+}, 30000); // run every 30 seconds
 
 // Start Server
 server.listen(PORT, () => {

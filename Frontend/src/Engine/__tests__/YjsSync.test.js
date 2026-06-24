@@ -68,6 +68,10 @@ describe('Yjs Real-Time Synchronization Tests', () => {
         engineA = new CanvasEngineController(canvasA, document.createElement('div'), 'test-room', 'owner');
         engineB = new CanvasEngineController(canvasB, document.createElement('div'), 'test-room', 'editor');
 
+        // Explicitly set clientIDs so conflict resolution is deterministic (highest clientID wins)
+        engineA.doc.clientID = 1;
+        engineB.doc.clientID = 2;
+
         // Force initialization of default layers
         engineA.createDefaultLayer();
         syncDocs(engineA.doc, engineB.doc);

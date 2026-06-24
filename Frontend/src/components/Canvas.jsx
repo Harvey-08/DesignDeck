@@ -10,8 +10,11 @@ export default function Canvas({ canvasEngineRef, activeTool, brushColor, brushS
 
     const resizeCanvas = () => {
       const { width, height } = containerRef.current.getBoundingClientRect();
-      canvasRef.current.width = width;
-      canvasRef.current.height = height;
+      const dpr = window.devicePixelRatio || 1;
+      canvasRef.current.width = width * dpr;
+      canvasRef.current.height = height * dpr;
+      canvasRef.current.style.width = `${width}px`;
+      canvasRef.current.style.height = `${height}px`;
       if (canvasEngineRef?.current) {
         canvasEngineRef.current.render();
       }

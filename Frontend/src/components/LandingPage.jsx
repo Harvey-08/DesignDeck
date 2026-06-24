@@ -25,7 +25,7 @@ const LandingPage = () => {
         const guestId = `guest-${Math.random().toString(36).substring(2, 9)}`;
         localStorage.clear();
         localStorage.setItem('isGuest', 'true');
-        localStorage.setItem('user', JSON.stringify({ name: `Guest_${Math.floor(Math.random() * 8999) + 1000}` }));
+        localStorage.setItem('user', JSON.stringify({ _id: guestId, name: `Guest_${Math.floor(Math.random() * 8999) + 1000}` }));
         
         // Go directly to a canvas to prove it works
         window.location.assign(`/canvas/${guestId}`);

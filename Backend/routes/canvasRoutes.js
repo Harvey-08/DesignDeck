@@ -7,10 +7,13 @@ const router = express.Router();
 
 router.post('/create', protect, createCanvas);
 router.get('/my-canvases', protect, getMyCanvases);
+router.get('/search', protect, canvasController.searchCanvases);
 router.get('/:id', protect, getCanvas);
 router.post('/:id/invite', protect, inviteUser);
 router.delete('/:id/members/:userId', protect, removeMember);
 router.put('/:id/members/:userId/role', protect, canvasController.updateMemberRole);
+router.patch('/:id/move', protect, canvasController.moveCanvas);
+router.patch('/:id/favorite', protect, canvasController.favoriteCanvas);
 router.put('/:id/name', protect, updateCanvasName);
 router.delete('/:id', protect, deleteCanvas);
 router.put('/:id/favorite', protect, toggleFavorite);

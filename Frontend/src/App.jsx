@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import TopBar from './components/TopBar';
 import Toolbar from './components/Toolbar';
 import Footer from './components/Footer';
@@ -14,6 +14,8 @@ import ChatPanel from './components/ChatPanel';
 import JoinCanvas from './components/JoinCanvas';
 import NotificationSystem from './components/NotificationSystem';
 import BotWidget from './components/Bot/BotWidget';
+import MeetingLobby from './components/Meeting/MeetingLobby';
+import MeetingRoom from './components/Meeting/MeetingRoom';
 
 import { ThemeProvider } from './context/ThemeProvider';
 import { useTheme } from './context/ThemeContext';
@@ -64,6 +66,98 @@ function CanvasWorkspace({ canvasEngineRef }) {
   const [branches, setBranches] = useState([]);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isAuthorshipMode, setIsAuthorshipMode] = useState(false);
+  const [isMeetingOpen, setIsMeetingOpen] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(`meeting_open_${canvasId}`);
+      return saved === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [activeMeeting, setActiveMeeting] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(`active_meeting_${canvasId}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [meetingCollaborationDisabled, setMeetingCollaborationDisabled] = useState(false);
+  
+  const [searchParams] = useSearchParams();
+  const meetingIdParam = searchParams.get('meetingId');
+
+  useEffect(() => {
+    if (canvasId) {
+      sessionStorage.setItem(`meeting_open_${canvasId}`, isMeetingOpen ? 'true' : 'false');
+    }
+  }, [isMeetingOpen, canvasId]);
+
+  useEffect(() => {
+    if (canvasId) {
+      if (activeMeeting) {
+        sessionStorage.setItem(`active_meeting_${canvasId}`, JSON.stringify(activeMeeting));
+      } else {
+        sessionStorage.removeItem(`active_meeting_${canvasId}`);
+      }
+    }
+  }, [activeMeeting, canvasId]);
+
+  const [meetingPosition, setMeetingPosition] = useState({ x: window.innerWidth - 504, y: 80 });
+  const dragStartRef = useRef(null);
+
+  useEffect(() => {
+    setMeetingPosition({
+      x: window.innerWidth - 504,
+      y: 80
+    });
+  }, []);
+
+  const handleMeetingDragStart = (e) => {
+    if (e.button !== 0) return;
+    if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      posX: meetingPosition.x,
+      posY: meetingPosition.y
+    };
+
+    const handlePointerMove = (moveEvent) => {
+      if (!dragStartRef.current) return;
+      const dx = moveEvent.clientX - dragStartRef.current.startX;
+      const dy = moveEvent.clientY - dragStartRef.current.startY;
+      
+      let newX = dragStartRef.current.posX + dx;
+      let newY = dragStartRef.current.posY + dy;
+
+      const minX = 10;
+      const maxX = window.innerWidth - (isMeetingOpen ? 500 : 80);
+      const minY = 10;
+      const maxY = window.innerHeight - (isMeetingOpen ? 400 : 80);
+
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
+
+      setMeetingPosition({ x: newX, y: newY });
+    };
+
+    const handlePointerUp = () => {
+      dragStartRef.current = null;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
+  useEffect(() => {
+    if (meetingIdParam) {
+      setIsMeetingOpen(true);
+    }
+  }, [meetingIdParam]);
 
   // Layer State
   const [activeLayerId, setActiveLayerId] = useState(null);
@@ -147,10 +241,30 @@ function CanvasWorkspace({ canvasEngineRef }) {
     if (!canvasMetadata) return 'viewer';
     const isOwner = canvasMetadata.owner?._id === currentUser._id || canvasMetadata.owner === currentUser._id;
     if (isOwner) return 'owner';
-    const member = canvasMetadata.members?.find(m => (m.user?._id || m.user) === currentUser._id);
+    
+    if (isMeetingOpen) {
+      if (meetingCollaborationDisabled) return 'viewer';
+      const member = canvasMetadata.members?.find(m => {
+        const mId = m.user?._id || m.user;
+        return mId && mId.toString() === currentUser._id?.toString();
+      });
+      if (member) return member.role || 'editor';
+      return 'editor';
+    }
+
+    const member = canvasMetadata.members?.find(m => {
+      const mId = m.user?._id || m.user;
+      return mId && mId.toString() === currentUser._id?.toString();
+    });
     return member?.role || 'viewer';
   };
   const userRole = getRole();
+
+  useEffect(() => {
+    if (canvasEngineRef.current) {
+      canvasEngineRef.current.setUserRole(userRole);
+    }
+  }, [userRole]);
 
   const handleNameChange = async (newName) => {
     const token = localStorage.getItem('token');
@@ -332,11 +446,81 @@ function CanvasWorkspace({ canvasEngineRef }) {
         if (value.opacity) setBrushOpacity(Math.round(value.opacity * 100));
       }
       if (key === 'tool') setActiveTool(value);
-      if (key === 'selection') setActiveLayerId(value);
+      if (key === 'selection') {
+        setActiveLayerId(value);
+        if (value && canvasEngineRef.current) {
+          const obj = canvasEngineRef.current.getObject(value);
+          if (obj && obj.style) {
+            if (obj.style.color) setBrushColor(obj.style.color);
+            if (obj.style.width) setBrushSize(obj.style.width);
+            if (obj.style.opacity !== undefined) setBrushOpacity(Math.round(obj.style.opacity * 100));
+            if (obj.style.fontFamily) setFontFamily(obj.style.fontFamily);
+            if (obj.style.fillColor) setFillOn(obj.style.fillColor !== 'transparent');
+          }
+        }
+      }
     };
     window.addEventListener('engineStateChange', handleStateChange);
     return () => window.removeEventListener('engineStateChange', handleStateChange);
-  }, []);
+  }, [branches]);
+
+  if (activeMeeting) {
+    return (
+      <MeetingRoom
+        meetingId={activeMeeting.meetingId}
+        title={activeMeeting.title}
+        hostId={activeMeeting.hostId}
+        videoDeviceId={activeMeeting.videoDeviceId}
+        audioDeviceId={activeMeeting.audioDeviceId}
+        initialVideoOff={activeMeeting.initialVideoOff}
+        initialMuted={activeMeeting.initialMuted}
+        onLeaveWorkspace={() => {
+          setActiveMeeting(null);
+          setIsMeetingOpen(false);
+          const isGuest = localStorage.getItem('isGuest') === 'true';
+          if (isGuest) {
+            navigate('/');
+          } else {
+            navigate('/dashboard');
+          }
+        }}
+        canvasId={canvasId}
+        canvasEngineRef={canvasEngineRef}
+        activeTool={activeTool}
+        setActiveTool={setActiveTool}
+        brushColor={brushColor}
+        setBrushColor={setBrushColor}
+        brushSize={brushSize}
+        setBrushSize={setBrushSize}
+        brushOpacity={brushOpacity}
+        setBrushOpacity={setBrushOpacity}
+        fontFamily={fontFamily}
+        setFontFamily={setFontFamily}
+        eraserStrength={eraserStrength}
+        setEraserStrength={setEraserStrength}
+        fillEnabled={fillEnabled}
+        setFillOn={setFillOn}
+        gridOpacity={gridOpacity}
+        setGridOpacity={setGridOpacity}
+        canvasMetadata={canvasMetadata}
+        fetchCanvasMetadata={fetchCanvasMetadata}
+        userRole={userRole}
+        currentUser={currentUser}
+        clearCanvas={clearCanvas}
+        handleAction={handleAction}
+        handleImportAction={handleImportAction}
+        isPropertiesOpen={isPropertiesOpen}
+        setIsPropertiesOpen={setIsPropertiesOpen}
+        layers={layers}
+        activeLayerId={activeLayerId}
+        layerActions={layerActions}
+        isTimelineOpen={isTimelineOpen}
+        setIsTimelineOpen={setIsTimelineOpen}
+        isAuthorshipMode={isAuthorshipMode}
+        onAuthorshipToggle={handleAuthorshipToggle}
+      />
+    );
+  }
 
   return (
     <div className="w-screen h-screen flex flex-col overflow-hidden font-sans transition-colors duration-300" style={{ background: t.workspaceBg }}>
@@ -361,6 +545,8 @@ function CanvasWorkspace({ canvasEngineRef }) {
           setIsTimelineOpen={setIsTimelineOpen}
           isChatOpen={isChatOpen}
           setIsChatOpen={setIsChatOpen}
+          isMeetingOpen={isMeetingOpen}
+          setIsMeetingOpen={setIsMeetingOpen}
           isAuthorshipMode={isAuthorshipMode}
           onAuthorshipToggle={handleAuthorshipToggle}
           engine={canvasEngineRef.current}
@@ -383,6 +569,8 @@ function CanvasWorkspace({ canvasEngineRef }) {
       />
 
       <div className="flex-1 flex overflow-hidden relative">
+
+        {/* WebRTC meeting is now rendered as a floating draggable/minimizable widget, and setup lobby is inside Lobby Modal */}
 
         {/* Toolbar (left, 64px specified) */}
         <div className={`absolute top-0 bottom-0 left-0 z-40 flex items-center transition-all duration-500 ease-spring ${isToolbarOpen ? 'translate-x-0' : 'translate-x-[-100px]'}`}>
@@ -458,8 +646,84 @@ function CanvasWorkspace({ canvasEngineRef }) {
             </div>
           </div>
         </main>
-        <BotWidget canvasEngineRef={canvasEngineRef} />
+        <BotWidget 
+          canvasEngineRef={canvasEngineRef} 
+          isDark={theme === 'dark'}
+          style={{ 
+            right: isPropertiesOpen ? '336px' : '16px' 
+          }} 
+        />
       </div>
+
+      {/* Lobby Modal Overlay */}
+      {isMeetingOpen && !activeMeeting && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 w-full max-w-md p-6 relative animate-in zoom-in-95 duration-200">
+            <button 
+              onClick={() => setIsMeetingOpen(false)}
+              className="absolute top-6 right-6 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 z-50"
+            >
+              Close
+            </button>
+            <MeetingLobby
+              canvasId={canvasId}
+              initialMeetingId={meetingIdParam}
+              onJoin={(meetingConfig) => {
+                setActiveMeeting(meetingConfig);
+                setIsMeetingOpen(true); // Ensure call is expanded when started/joined
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Floating Call Widget */}
+      {activeMeeting && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${meetingPosition.x}px`,
+            top: `${meetingPosition.y}px`,
+            zIndex: 90
+          }}
+          className={`bg-slate-950 text-white shadow-2xl border border-slate-800 flex flex-col transition-all duration-300 ${
+            !isMeetingOpen 
+              ? 'w-14 h-14 rounded-full cursor-pointer hover:scale-105 items-center justify-center' 
+              : 'w-[480px] h-[380px] rounded-[2rem] overflow-hidden'
+          }`}
+        >
+          {!isMeetingOpen ? (
+            <div 
+              onPointerDown={handleMeetingDragStart}
+              onClick={() => setIsMeetingOpen(true)}
+              className="relative w-full h-full flex items-center justify-center"
+              title="Call in progress. Click to expand."
+            >
+              <div className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping" />
+              <div className="w-9 h-9 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-md">
+                <Video size={18} />
+              </div>
+            </div>
+          ) : (
+            <MeetingRoom
+              meetingId={activeMeeting.meetingId}
+              title={activeMeeting.title}
+              hostId={activeMeeting.hostId}
+              videoDeviceId={activeMeeting.videoDeviceId}
+              audioDeviceId={activeMeeting.audioDeviceId}
+              initialVideoOff={activeMeeting.initialVideoOff}
+              initialMuted={activeMeeting.initialMuted}
+              onLeaveWorkspace={() => {
+                setActiveMeeting(null);
+                setIsMeetingOpen(false);
+              }}
+              onDragStart={handleMeetingDragStart}
+              onMinimize={() => setIsMeetingOpen(false)}
+              onCollaborationChange={(disabled) => setMeetingCollaborationDisabled(disabled)}
+            />
+          )}
+        </div>
+      )}
 
       {/* BottomBar (40px specified) */}
       <footer className="h-10 shrink-0 border-t flex items-center justify-between px-8 text-[10px] font-black uppercase tracking-[0.2em] transition-colors"
