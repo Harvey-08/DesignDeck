@@ -10,14 +10,15 @@ DesignDeck is powered by a high-performance decoupled architecture designed for 
 
 ### DesignDeck System Architecture
 
-This diagram illustrates the core drawing, state synchronization, and real-time database persistence pipeline.
+This diagram illustrates the core drawing, state synchronization, real-time database persistence, WebRTC video calling, and external asset processing pipeline.
 
 ```mermaid
 flowchart TD
 
     subgraph Frontend ["Frontend Client Layer"]
-        UI["React UI (Toolbar, Canvas, Sidebar)"]
+        UI["React UI (Toolbar, Canvas, Sidebar, Dashboard)"]
         BotWidget["AI Co-Pilot Bot Widget"]
+        MeetingUI["Meeting WebRTC UI (Lobby, Room, Grid, Chat)"]
         Controller["CanvasEngineController"]
 
         subgraph Managers ["Drawing Engine Subsystems"]
@@ -29,67 +30,111 @@ flowchart TD
 
         YClient["Yjs WebSockets Client"]
         SIOClient["Socket.IO Client"]
+        WebRTCClient["WebRTC Media Engine"]
+    end
 
-        UI --> Controller
-        UI --> BotWidget
-        BotWidget --> Controller
-
-        Controller --> ToolMgr
-        Controller --> HistMgr
-        Controller --> LayerMgr
-        Controller --> ReplayMgr
-        Controller --> YClient
-        Controller --> SIOClient
+    subgraph External ["External Network"]
+        RemotePeers(["Remote Peer Clients"])
     end
 
     subgraph Backend ["Backend Server Layer"]
+        WSServer["Yjs WebSocket Server"]
         HTTP["Express REST API"]
+        SIOServer["Socket.IO Server (Signaling & Events)"]
+        
         AuthMid["JWT Auth Middleware"]
+        UploadMid["Multer Upload Middleware"]
+        Persistence["Yjs Persistence Manager"]
+        
+        AuthController["Auth Controller"]
+        CanvasController["Canvas Controller"]
+        FolderController["Folder Controller"]
+        MeetingController["Meeting Controller"]
+        NotificationController["Notification Controller"]
         BotController["Bot Controller (SSE)"]
         RAGService["RAG Service (ONNX)"]
-        WSServer["Yjs WebSocket Server"]
-        SIOServer["Socket.IO Server Hub"]
-        Persistence["Yjs Persistence Manager"]
-
-        HTTP --> AuthMid
-        HTTP --> BotController
-        BotController --> RAGService
-        WSServer --> Persistence
     end
 
     subgraph Storage ["Storage & External Services"]
         subgraph Mongo ["MongoDB Database"]
             UserCol[("User Collection")]
             CanvasCol[("Canvas Collection")]
+            FolderCol[("Folder Collection")]
             EventCol[("Event Collection")]
             CommentCol[("Comment Collection")]
+            NotificationCol[("Notification Collection")]
+            MeetingCol[("Meeting Collection")]
+            MeetingMsgCol[("MeetingMessage Collection")]
+            MeetingRecCol[("MeetingRecording Collection")]
         end
 
         KBFile[("knowledge_base.json")]
         GroqCloud[["Groq LLM Service"]]
+        CloudinaryCDN[["Cloudinary CDN"]]
     end
 
-    %% Frontend -> Backend
+    %% Frontend Internal Connections
+    UI --> BotWidget
+    UI --> Controller
+    UI --> MeetingUI
+    BotWidget --> Controller
+    MeetingUI --> WebRTCClient
+    MeetingUI --> SIOClient
+    
+    Controller --> ToolMgr
+    Controller --> HistMgr
+    Controller --> LayerMgr
+    Controller --> ReplayMgr
+    Controller --> YClient
+    Controller --> SIOClient
+
+    %% Frontend to Backend Connections
     UI -->|HTTP REST Requests| HTTP
     BotWidget -->|SSE Stream| HTTP
+    MeetingUI -->|Multipart Upload| HTTP
     YClient -->|WebSocket Sync| WSServer
-    SIOClient -->|WebSocket Events| SIOServer
+    SIOClient -->|WebSocket Events & Signaling| SIOServer
+    WebRTCClient <-->|Direct P2P Media Streams| RemotePeers
 
-    %% Backend -> Services
-    AuthMid --> CanvasCol
+    %% Backend Routing & Middleware
+    HTTP --> AuthController
+    HTTP --> BotController
+    HTTP --> AuthMid
+    HTTP --> UploadMid
+    
+    AuthMid --> CanvasController
+    AuthMid --> FolderController
+    AuthMid --> MeetingController
+    AuthMid --> NotificationController
+    
+    UploadMid --> MeetingController
+    WSServer --> Persistence
+    WSServer --> AuthMid
+    BotController --> RAGService
+
+    %% Backend to External Services
     BotController --> GroqCloud
     RAGService --> KBFile
+    MeetingController --> CloudinaryCDN
 
-    %% Persistence
+    %% Controllers to MongoDB Collections
+    AuthController --> UserCol
+    CanvasController --> CanvasCol
+    CanvasController --> UserCol
+    FolderController --> FolderCol
+    MeetingController --> MeetingCol
+    MeetingController --> MeetingRecCol
+    MeetingController --> MeetingMsgCol
+    NotificationController --> NotificationCol
+
+    %% Real-time Persistence & Messaging
     Persistence --> CanvasCol
     Persistence --> EventCol
     SIOServer --> CommentCol
+    SIOServer --> MeetingMsgCol
+    SIOServer --> NotificationCol
 
-    %% Vertical stacking
-    Frontend --> Backend
-    Backend --> Storage
-
-    %% Alignment helpers
+    %% Vertical Alignment Helpers to keep subgraphs in clean vertical rows
     Controller ~~~ HTTP
     HTTP ~~~ CanvasCol
 ```
@@ -111,13 +156,30 @@ flowchart TD
 5. **Canvas-Aware AI Co-Pilot & RAG Pipeline**:
    The chatbot leverages a local RAG semantic search using the `all-MiniLM-L6-v2` transformer model (via Xenova) to query in-memory cached vector embeddings of product help docs. The backend feeds the matching document contexts and a token-trimmed JSON representation of the canvas state to the Groq LLM API. The LLM streams conversational answers and JSON canvas commands back over Server-Sent Events (SSE). The client parses this stream and executes modifications directly on the drawing canvas.
 
+6. **WebRTC Signaling & P2P Media Pipeline**:
+   Real-time video, audio, and screen sharing are driven by standard browser WebRTC APIs, using Socket.IO as the signaling plane. When a user joins a meeting room:
+   - A Socket.IO event `join-room` is dispatched, updating the `Meeting` participant list in MongoDB and notifying other active clients.
+   - Sockets handle the exchange of session descriptions (SDP offers/answers) and connection candidates (`ice-candidate`) to establish direct Peer-to-Peer `RTCPeerConnection` channels between clients.
+   - Media channels (microphones, webcams, screens) are streamed directly P2P, bypassing server processing to minimize latency and bandwidth consumption.
+   - Host-initiated controls (muting, video locking, disabling collaboration, or setting participant permission roles) are instantly synced across all peers using custom Socket.IO events (`host-control-change` -> `host-control-updated`).
+
+7. **Call Recording & CDN Persistence Pipeline**:
+   Users can record active screen sharing and meeting media streams. The frontend utilizes the browser `MediaRecorder` API to capture and stream WebM video chunks. Upon stopping the call recording, the binary stream is compiled and sent via a multipart Form Data upload handled by Express and `Multer`. The backend processes this file locally, uploads it securely to `Cloudinary CDN`, saves the hosted asset URL link in the `MeetingRecording` database collection, and removes the local temporary file.
+
+8. **Workspace Folder & Hierarchy Directory Pipeline**:
+   Canvases are organized hierarchically inside dynamic workspaces. Folder routes handle directory traversal, folder creations, renames, and deletions. Each canvas document maintains a reference to its parent folder ID, enabling seamless directory relocation, dashboard listings, and clean folder-scoped project organizations.
+
+9. **Transactional Alert & Notification Engine**:
+   Real-time workspace collaborations, canvas share links, scheduled meeting start prompts (polled every 30 seconds by a background server scheduler), and access-request approvals are routed instantly to active users using Socket.IO events. These are backed by persistent storage in the `Notification` collection to provide a persistent activity history log in user dashboards.
+
 ---
 
 ## Key Features
 
 *   **Real-Time CRDT Canvas Collaboration**: Powered by `Yjs` and WebSocket endpoints for low-latency, conflict-free drawing and object synchronization.
-*   **WebRTC Video/Audio Conference Rooms**: Join live voice and video calls directly inside active canvas rooms. Features a draggable, minimizable widget window, local camera/audio device selectors, and peer signaling.
-*   **Screen Sharing & Call Recording**: Share screens and capture meeting video feeds, uploading recordings directly to Cloudinary for playback.
+*   **WebRTC Video/Audio Conference Rooms**: Full-screen workspace-integrated meeting rooms allowing collaborators to hold live video/audio conference calls directly inside canvas rooms. Includes a pre-call Lobby for camera/microphone preview, dynamic participant grids, and robust peer signaling.
+*   **Host-Controlled Meeting Sync**: Meeting hosts can manage active sessions, mute/unmute participants, toggle cameras, disable chat panels, restrict canvas editing, or adjust user access permissions in real-time.
+*   **Screen Sharing & Call Recording**: Share your screen with other call participants and record meeting screen shares/audio feeds, which are automatically processed on the server and uploaded to Cloudinary for instant playback and history logs.
 *   **Active Properties Inspector Sync**: Modify selected shape properties (color palette, stroke width, opacity, text fonts, fill modes) in real-time.
 *   **AI Co-Pilot & RAG Assistant**: Ask the chatbot about drawing shapes, styling elements, grid formatting, or platform guidelines, streaming responses and actions over Server-Sent Events (SSE).
 *   **Stale Cursor Suppression**: Automatic cursor cleanup logic that clears inactive pointers after 5 seconds to eliminate duplicate trails during page reconnections.
@@ -167,7 +229,8 @@ DesignDeck/
 │   │   ├── botController.js                                 # Handles AI chatbot conversations, RAG search, and SSE streaming
 │   │   ├── canvasController.js                              # Handles canvases, memberships, links, and role sockets
 │   │   ├── folderController.js                              # Handles directories and workspace canvas groupings #
-│   │   └── meetingController.js                             # Handles video calls schedule, WebRTC, and recordings #
+│   │   ├── meetingController.js                             # Handles video calls schedule, WebRTC, and recordings #
+│   │   └── notificationController.js                        # Handles user alerts, meeting notifications, and link invites #
 │   ├── data/                                                # Database seeding and knowledge base directory
 │   │   └── knowledge_base.json                              # Platform help guidelines database for RAG context retrieval
 │   ├── middleware/                                          # Express routing middleware
@@ -192,6 +255,8 @@ DesignDeck/
 │   │   └── notificationRoutes.js                            # Maps alert endpoints to notificationController #
 │   ├── services/                                            # Core server-side business logic helper modules
 │   │   └── RAGService.js                                    # Local vector embedding search using all-MiniLM-L6-v2
+│   ├── tests/                                               # Automated integration tests
+│   │   └── meeting.test.js                                  # Asserts meeting scheduling and recording uploads
 │   ├── package-lock.json                                    # Node.js backend dependencies lockfile
 │   ├── package.json                                         # Node.js backend configuration and scripts
 │   └── server.js                                            # Main server starting HTTP, socket.io, and WS servers
@@ -209,6 +274,8 @@ DesignDeck/
 │   │   │   │   ├── BotWidget.css                            # Styling for the AI Co-Pilot floating widget panel
 │   │   │   │   └── BotWidget.jsx                            # Renders bot floating action buttons and chats
 │   │   │   ├── Meeting/                                     # Video conference components #
+│   │   │   │   ├── ChatPanel.jsx                            # Live in-call text chat panel #
+│   │   │   │   ├── MeetingControls.jsx                      # Device toggles, screen share, and recording control bar #
 │   │   │   │   ├── MeetingHistory.jsx                       # View and download meeting recordings #
 │   │   │   │   ├── MeetingLobby.jsx                         # Audio and video settings select overlay #
 │   │   │   │   ├── MeetingRoom.jsx                          # Draggable, minimizable calling canvas overlay #
@@ -283,11 +350,6 @@ DesignDeck/
 │   │   │   └── collabEventDispatcher.js                     # Emits events for collaborator joins/leaves/locks
 │   │   ├── hooks/                                           # React custom hooks
 │   │   │   └── useLayers.js                                 # Synchronizes canvas layers with local React states
-│   │   ├── test/                                            # Vitest helper utilities
-│   │   │   └── setup.js                                     # Automated testing runner scripts
-│   │   ├── ui/                                              # Custom icon components mapping
-│   │   │   ├── iconMap.js                                   # Maps tool icons for application navigation
-│   │   │   └── icons.js                                     # Custom collection of UI icons
 │   │   ├── App.jsx                                          # Core routing context, state controls, socket feeds
 │   │   ├── config.js                                        # Connects configuration files endpoints
 │   │   ├── index.css                                        # Global styling system layout styles
