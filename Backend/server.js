@@ -41,7 +41,25 @@ const app = express();
 const PORT = process.env.PORT;
 
 // Middleware
-app.use(cors());
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:3000'
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, postman, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Routes
@@ -105,8 +123,9 @@ const server = http.createServer(app);
 // Setup Socket.IO for chat/comments
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 app.set('socketio', io);
